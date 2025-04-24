@@ -146,7 +146,7 @@ on_client_subscribe(#{clientid := ClientId}, _Properties, TopicFilters, _Env) ->
     {qos, maps:get(qos, Qos)},
     {ts, Now}
   ],
-  produce_kafka_payload(ClientId, Payload),
+  %%produce_kafka_payload(ClientId, Payload),
   io:format("Client(~s) will subscribe: ~p~n", [ClientId, TopicFilters]),
   {ok, TopicFilters}.
 
@@ -162,7 +162,7 @@ on_client_unsubscribe(#{clientid := ClientId}, _Properties, TopicFilters, _Env) 
     {topic, Topic},
     {ts, Now}
   ],
-  produce_kafka_payload(ClientId, Payload),
+  %%produce_kafka_payload(ClientId, Payload),
   io:format("Client(~s) will unsubscribe ~p~n", [ClientId, TopicFilters]),
   {ok, TopicFilters}.
 
