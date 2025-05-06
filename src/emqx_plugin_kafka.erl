@@ -311,7 +311,7 @@ format_payload(Message) ->
       MsgPayload64 = list_to_binary(base64:encode_to_string(MsgPayload));
   % ?LOG_INFO("[KAFKA PLUGIN]MsgPayload64 : ~s~n", [MsgPayload64]);
     RawType == false ->
-      MsgPayload64 = list_to_binary(binary:encode_hex(MsgPayload))
+      MsgPayload64 = binary:encode_hex(MsgPayload)
   end,
   Payload = [{action, message_publish},
     {device_id, ClientId},
