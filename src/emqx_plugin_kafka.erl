@@ -94,7 +94,8 @@ on_client_connack(ConnInfo = #{clientid := ClientId}, Rc, Props, _Env) ->
 on_client_connected(ClientInfo = #{clientid := ClientId}, ConnInfo, _Env) ->
   {IpAddr, _Port} = maps:get(peername, ConnInfo),
   Action = <<"connected">>,
-  Now = now_mill_secs(os:timestamp()),
+  %% Now = now_mill_secs(os:timestamp()),
+  Now =  erlang:system_time(millisecond),
   Online = 1,
   Payload = [
     {action, Action},
@@ -112,7 +113,8 @@ on_client_connected(ClientInfo = #{clientid := ClientId}, ConnInfo, _Env) ->
 
 on_client_disconnected(ClientInfo = #{clientid := ClientId}, ReasonCode, ConnInfo, _Env) ->
   Action = <<"disconnected">>,
-  Now = now_mill_secs(os:timestamp()),
+  %% Now = now_mill_secs(os:timestamp()),
+  Now =  erlang:system_time(millisecond),
   Online = 0,
   Payload = [
     {action, Action},
@@ -138,7 +140,8 @@ on_client_subscribe(#{clientid := ClientId}, _Properties, TopicFilters, _Env) ->
   Topic = erlang:element(1, erlang:hd(TopicFilters)),
   Qos = erlang:element(2, lists:last(TopicFilters)),
   Action = <<"subscribe">>,
-  Now = now_mill_secs(os:timestamp()),
+  %% Now = now_mill_secs(os:timestamp()),
+  Now =  erlang:system_time(millisecond),
   Payload = [
     {device_id, ClientId},
     {action, Action},
@@ -155,7 +158,8 @@ on_client_unsubscribe(#{clientid := ClientId}, _Properties, TopicFilters, _Env) 
   %% ?LOG_INFO("[KAFKA PLUGIN]Client(~s) will unsubscribe ~p~n", [ClientId, TopicFilters]),
   Topic = erlang:element(1, erlang:hd(TopicFilters)),
   Action = <<"unsubscribe">>,
-  Now = now_mill_secs(os:timestamp()),
+  %% Now = now_mill_secs(os:timestamp()),
+  Now =  erlang:system_time(millisecond),
   Payload = [
     {device_id, ClientId},
     {action, Action},
