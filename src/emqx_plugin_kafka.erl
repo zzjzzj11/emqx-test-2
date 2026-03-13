@@ -211,7 +211,29 @@ on_message_publish(Message, _Env) ->
 produce_kafka_msg(Message) ->
     %% 原有的Kafka消息生产逻辑
   {ok, ClientId, Payload} = format_payload(Message),
-  produce_kafka_payload(ClientId, Payload),
+  %% 从消息的userproperty中提取priority字段
+  Priority = case emqx_message:get_header(userproperty, Message) of
+    undefined -> undefined;
+    UserProps -> 
+      case lists:keyfind("priority", 1, UserProps) of
+        {_, P} -> P;
+        false -> undefined
+      end
+  end,
+  %% 将priority转换为整数
+  PriorityInt = case Priority of
+    undefined -> undefined;
+    _ -> 
+      try list_to_integer(binary_to_list(Priority)) of
+        Int -> Int
+      catch
+        _:_ -> undefined
+      end
+  end,
+  %% 根据优先级获取对应topic
+  Topic = get_kafka_topic(PriorityInt),
+  %% 发送消息到对应topic
+  produce_kafka_payload(ClientId, Payload, Topic),
   io:format("Publish ~p~n", [emqx_message:to_map(Message)]),
   {ok, Message}.
 %%---------------------message publish stop----------------------%%
@@ -295,10 +317,19 @@ kafka_init(_Env) ->
   logger:info("Init emqx plugin kafka successfully.....~n").
 
 get_kafka_topic() ->
+  get_kafka_topic(undefined).
+
+%% 根据优先级获取对应的Kafka topic
+get_kafka_topic(Priority) ->
   logger:info("all envs: ~p~n", [application:get_all_env(emqx_plugin_kafka)]),
-  {OK, CONF} =  application:get_env(emqx_plugin_kafka,kafka),
-  Topic = maps:get(topic, CONF),
-  Topic.
+  {ok, CONF} =  application:get_env(emqx_plugin_kafka,kafka),
+  DefaultTopic = maps:get(topic, CONF),
+  case Priority of
+    2 -> maps:get(topic_high, CONF, DefaultTopic);
+    1 -> maps:get(topic_medium, CONF, DefaultTopic);
+    0 -> maps:get(topic_low, CONF, DefaultTopic);
+    _ -> DefaultTopic
+  end.
 
 
 format_payload(Message) ->
@@ -349,8 +380,7 @@ unload() ->
   emqx:unhook('message.acked', {?MODULE, on_message_acked}),
   emqx:unhook('message.dropped', {?MODULE, on_message_dropped}).
 
-produce_kafka_payload(Key, Message) ->
-  Topic = get_kafka_topic(),
+produce_kafka_payload(Key, Message, Topic) ->
   MessageBody = jsx:encode(Message),
   io:format("[KAFKA PLUGIN]Message = ~s~n",[MessageBody]),
   io:format("[KAFKA PLUGIN]Topic = ~s~n",[Topic]),
@@ -358,6 +388,11 @@ produce_kafka_payload(Key, Message) ->
             io:format(user, "\nProduced to partition ~p at base-offset ~p\n", [Partition, BaseOffset]) 
           end,
   brod:produce_cb(client1, Topic, hash, Key, MessageBody, AckCb).
+
+%% 兼容旧接口，使用默认topic
+produce_kafka_payload(Key, Message) ->
+  Topic = get_kafka_topic(),
+  produce_kafka_payload(Key, Message, Topic).
 
 ntoa({0, 0, 0, 0, 0, 16#ffff, AB, CD}) ->
   inet_parse:ntoa({AB bsr 8, AB rem 256, CD bsr 8, CD rem 256});
