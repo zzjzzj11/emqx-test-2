@@ -224,6 +224,7 @@ produce_kafka_msg(Message) ->
           end
       end
   end,
+  io:format("[KAFKA PLUGIN]Extracted Priority: ~p~n", [Priority]),
   %% 将priority转换为整数
   PriorityInt = case Priority of
     undefined -> undefined;
