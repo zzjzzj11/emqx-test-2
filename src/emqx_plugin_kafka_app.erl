@@ -56,6 +56,9 @@ get_kafka_config() ->
                                     reconnect_cool_down_seconds => maps:get(<<"reconnect_cool_down_seconds">>, KafkaConfig, undefined),
                                     query_api_versions => maps:get(<<"query_api_versions">>, KafkaConfig, undefined),
                                     topic => maps:get(<<"topic">>, KafkaConfig, undefined),
+                                    topic_low => maps:get(<<"topic_low">>, KafkaConfig, undefined),
+                                    topic_medium => maps:get(<<"topic_medium">>, KafkaConfig, undefined),
+                                    topic_high => maps:get(<<"topic_high">>, KafkaConfig, undefined),
                                     mqtt_topics => maps:get(<<"mqtt_topics">>, KafkaConfig, undefined)
                                 },
                                 application:set_env(emqx_plugin_kafka, kafka, Config),
@@ -94,6 +97,18 @@ fallback_config() ->
               Val -> Val
           end),
       topic => list_to_binary(case os:getenv("KAFKA_TOPIC") of
+                false -> "mqtt-publish";
+                T -> T
+               end),
+      topic_low => list_to_binary(case os:getenv("KAFKA_TOPIC_LOW") of
+                false -> "mqtt-publish";
+                T -> T
+               end),
+      topic_medium => list_to_binary(case os:getenv("KAFKA_TOPIC_MEDIUM") of
+                false -> "mqtt-publish";
+                T -> T
+               end),
+      topic_high => list_to_binary(case os:getenv("KAFKA_TOPIC_HIGH") of
                 false -> "mqtt-publish";
                 T -> T
                end),

@@ -326,7 +326,7 @@ get_kafka_topic() ->
 
 %% 根据优先级获取对应的Kafka topic
 get_kafka_topic(Priority) ->
-  logger:info("all envs: ~p~n", [application:get_all_env(emqx_plugin_kafka)]),
+  io:format("all envs: ~p~n", [application:get_all_env(emqx_plugin_kafka)]),
   {ok, CONF} =  application:get_env(emqx_plugin_kafka,kafka),
   DefaultTopic = maps:get(topic, CONF),
   case Priority of
