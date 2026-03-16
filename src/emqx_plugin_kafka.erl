@@ -211,13 +211,17 @@ on_message_publish(Message, _Env) ->
 produce_kafka_msg(Message) ->
     %% 原有的Kafka消息生产逻辑
   {ok, ClientId, Payload} = format_payload(Message),
-  %% 从消息的userproperty中提取priority字段
-  Priority = case emqx_message:get_header(userproperty, Message) of
+  %% 从消息的properties中提取User-Property中的priority字段
+  Priority = case emqx_message:get_header(properties, Message) of
     undefined -> undefined;
-    UserProps -> 
-      case lists:keyfind("priority", 1, UserProps) of
-        {_, P} -> P;
-        false -> undefined
+    Properties -> 
+      case maps:get('User-Property', Properties, undefined) of
+        undefined -> undefined;
+        UserProps -> 
+          case lists:keyfind(<<"priority">>, 1, UserProps) of
+            {_, P} -> P;
+            false -> undefined
+          end
       end
   end,
   %% 将priority转换为整数
