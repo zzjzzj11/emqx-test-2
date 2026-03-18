@@ -353,12 +353,18 @@ format_payload(Message) ->
     RawType == false ->
       MsgPayload64 = binary:encode_hex(MsgPayload)
   end,
+  %% 提取user property
+  UserProperty = case emqx_message:get_header(properties, Message) of
+    undefined -> undefined;
+    Properties -> maps:get('User-Property', Properties, undefined)
+  end,
   Payload = [{action, message_publish},
     {device_id, ClientId},
     {username, Username},
     {topic, Topic},
     {payload, MsgPayload64},
-    {ts, Message#message.timestamp}],
+    {ts, Message#message.timestamp},
+    {user_property, UserProperty}],
 
   {ok, ClientId, Payload}.
 
