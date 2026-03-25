@@ -348,9 +348,9 @@ get_topic_partitions(Client, Topic) ->
   case brod:get_metadata(Client, [Topic]) of
     {ok, Metadata} ->
       %% 解析metadata获取partition数目
-      Partitions = case lists:keyfind(Topic, 2, Metadata) of
-                    {_, Topic, PartitionsInfo} -> length(PartitionsInfo);
-                    false -> 0
+      Partitions = case lists:find(fun(T) -> maps:get(name, T) == Topic end, maps:get(topics, Metadata, [])) of
+                    {ok, TopicInfo} -> length(maps:get(partitions, TopicInfo, []));
+                    error -> 0
                   end,
       io:format("[KAFKA PLUGIN]Topic ~s has ~p partitions~n", [Topic, Partitions]);
     {error, Reason} ->
