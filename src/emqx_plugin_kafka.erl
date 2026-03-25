@@ -325,31 +325,21 @@ kafka_init(_Env) ->
   AddressList = translate(maps:get(address_list, _Env)),
   logger:info("[KAFKA PLUGIN]KafkaAddressList = ~p~n", [AddressList]),
   
-  %% 先启动一个临时客户端用于获取metadata
-  ok = brod:start_client(AddressList, metadata_client),
-  
-  %% 获取各优先级topic的partition数目
-  KafkaTopic_p0 = get_kafka_topic(0),
-  get_topic_partitions(metadata_client, KafkaTopic_p0),
-  
-  KafkaTopic_p1 = get_kafka_topic(1),
-  get_topic_partitions(metadata_client, KafkaTopic_p1),
-  
-  KafkaTopic_p2 = get_kafka_topic(2),
-  get_topic_partitions(metadata_client, KafkaTopic_p2),
-  
-  %% 停止临时客户端
-  brod:stop_client(metadata_client),
-  
   %% 启动正式客户端和producer
   ok = brod:start_client(AddressList, client1),
+  KafkaTopic_p0 = get_kafka_topic(0),
   ok = brod:start_producer(client1, KafkaTopic_p0 , _ProducerConfig = []),
+  get_topic_partitions(client1, KafkaTopic_p0),
   
   ok = brod:start_client(AddressList, client2),
+  KafkaTopic_p1 = get_kafka_topic(1),
   ok = brod:start_producer(client2, KafkaTopic_p1 , _ProducerConfig = []),
+  get_topic_partitions(client2, KafkaTopic_p1),
   
   ok = brod:start_client(AddressList, client3),
+  KafkaTopic_p2 = get_kafka_topic(2),
   ok = brod:start_producer(client3, KafkaTopic_p2 , _ProducerConfig = []),
+  get_topic_partitions(client3, KafkaTopic_p2),
   
   logger:info("Init emqx plugin kafka successfully.....~n").
 
