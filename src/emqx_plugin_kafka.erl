@@ -324,17 +324,48 @@ kafka_init(_Env) ->
   {ok, _} = application:ensure_all_started(brod),
   AddressList = translate(maps:get(address_list, _Env)),
   logger:info("[KAFKA PLUGIN]KafkaAddressList = ~p~n", [AddressList]),
+  
+  %% 先启动一个临时客户端用于获取metadata
+  ok = brod:start_client(AddressList, metadata_client),
+  
+  %% 获取各优先级topic的partition数目
   KafkaTopic_p0 = get_kafka_topic(0),
-  logger:info("[KAFKA PLUGIN]KafkaTopic = ~s~n", [KafkaTopic_p0]),
+  get_topic_partitions(metadata_client, KafkaTopic_p0),
+  
+  KafkaTopic_p1 = get_kafka_topic(1),
+  get_topic_partitions(metadata_client, KafkaTopic_p1),
+  
+  KafkaTopic_p2 = get_kafka_topic(2),
+  get_topic_partitions(metadata_client, KafkaTopic_p2),
+  
+  %% 停止临时客户端
+  brod:stop_client(metadata_client),
+  
+  %% 启动正式客户端和producer
   ok = brod:start_client(AddressList, client1),
   ok = brod:start_producer(client1, KafkaTopic_p0 , _ProducerConfig = []),
-  KafkaTopic_p1 = get_kafka_topic(1),
+  
   ok = brod:start_client(AddressList, client2),
   ok = brod:start_producer(client2, KafkaTopic_p1 , _ProducerConfig = []),
-  KafkaTopic_p2 = get_kafka_topic(2),
+  
   ok = brod:start_client(AddressList, client3),
   ok = brod:start_producer(client3, KafkaTopic_p2 , _ProducerConfig = []),
+  
   logger:info("Init emqx plugin kafka successfully.....~n").
+
+%% 获取并打印topic的partition数目
+get_topic_partitions(Client, Topic) ->
+  case brod:get_metadata(Client, [Topic]) of
+    {ok, Metadata} ->
+      %% 解析metadata获取partition数目
+      Partitions = case lists:keyfind(Topic, 2, Metadata) of
+                    {_, Topic, PartitionsInfo} -> length(PartitionsInfo);
+                    false -> 0
+                  end,
+      logger:info("[KAFKA PLUGIN]Topic ~s has ~p partitions~n", [Topic, Partitions]);
+    {error, Reason} ->
+      logger:error("[KAFKA PLUGIN]Failed to get metadata for topic ~s: ~p~n", [Topic, Reason])
+  end.
 
 get_kafka_topic() ->
   get_kafka_topic(undefined).
