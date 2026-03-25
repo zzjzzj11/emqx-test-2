@@ -315,10 +315,16 @@ kafka_init(_Env) ->
   {ok, _} = application:ensure_all_started(brod),
   AddressList = translate(maps:get(address_list, _Env)),
   logger:info("[KAFKA PLUGIN]KafkaAddressList = ~p~n", [AddressList]),
-  KafkaTopic = get_kafka_topic(),
-  logger:info("[KAFKA PLUGIN]KafkaTopic = ~s~n", [KafkaTopic]),
+  KafkaTopic_p0 = get_kafka_topic(0),
+  logger:info("[KAFKA PLUGIN]KafkaTopic = ~s~n", [KafkaTopic_p0]),
   ok = brod:start_client(AddressList, client1),
-  ok = brod:start_producer(client1, KafkaTopic , _ProducerConfig = []),
+  ok = brod:start_producer(client1, KafkaTopic_p0 , _ProducerConfig = []),
+  KafkaTopic_p1 = get_kafka_topic(1),
+  ok = brod:start_client(AddressList, client2),
+  ok = brod:start_producer(client2, KafkaTopic_p1 , _ProducerConfig = []),
+  KafkaTopic_p2 = get_kafka_topic(2),
+  ok = brod:start_client(AddressList, client3),
+  ok = brod:start_producer(client3, KafkaTopic_p2 , _ProducerConfig = []),
   logger:info("Init emqx plugin kafka successfully.....~n").
 
 get_kafka_topic() ->
