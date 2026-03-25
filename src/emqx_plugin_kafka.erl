@@ -329,32 +329,27 @@ kafka_init(_Env) ->
   ok = brod:start_client(AddressList, client1),
   KafkaTopic_p0 = get_kafka_topic(0),
   ok = brod:start_producer(client1, KafkaTopic_p0 , _ProducerConfig = []),
-  get_topic_partitions(AddressList, KafkaTopic_p0),
+  get_topic_partitions(client1, KafkaTopic_p0),
   
   ok = brod:start_client(AddressList, client2),
   KafkaTopic_p1 = get_kafka_topic(1),
   ok = brod:start_producer(client2, KafkaTopic_p1 , _ProducerConfig = []),
-  get_topic_partitions(AddressList, KafkaTopic_p1),
+  get_topic_partitions(client2, KafkaTopic_p1),
   
   ok = brod:start_client(AddressList, client3),
   KafkaTopic_p2 = get_kafka_topic(2),
   ok = brod:start_producer(client3, KafkaTopic_p2 , _ProducerConfig = []),
-  get_topic_partitions(AddressList, KafkaTopic_p2),
+  get_topic_partitions(client3, KafkaTopic_p2),
   
   logger:info("Init emqx plugin kafka successfully.....~n").
 
 %% 获取并打印topic的partition数目
 get_topic_partitions(Client, Topic) ->
-  case brod:get_metadata(Client, [Topic]) of
-    {ok, Metadata} ->
-      %% 解析metadata获取partition数目
-      Partitions = case lists:find(fun(T) -> maps:get(name, T) == Topic end, maps:get(topics, Metadata, [])) of
-                    {ok, TopicInfo} -> length(maps:get(partitions, TopicInfo, []));
-                    error -> 0
-                  end,
+  case brod:get_partitions_count(Client, Topic) of
+    {ok, Partitions} ->
       io:format("[KAFKA PLUGIN]Topic ~s has ~p partitions~n", [Topic, Partitions]);
     {error, Reason} ->
-      io:format("[KAFKA PLUGIN]Failed to get metadata for topic ~s: ~p~n", [Topic, Reason])
+      io:format("[KAFKA PLUGIN]Failed to get partitions count for topic ~s: ~p~n", [Topic, Reason])
   end.
 
 get_kafka_topic() ->
