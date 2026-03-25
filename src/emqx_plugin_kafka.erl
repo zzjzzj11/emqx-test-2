@@ -424,7 +424,7 @@ produce_kafka_payload(Client, Key, Message, Topic) ->
   AckCb = fun(Partition, BaseOffset) -> 
         logger:info("Produced to partition ~p at base-offset ~p", [Partition, BaseOffset])
   end,
-  brod:produce_cb(Client, Topic, hash, Key, MessageBody, AckCb).
+  brod:produce_cb(Client, Topic, random, Key, MessageBody, AckCb).
 
 ntoa({0, 0, 0, 0, 0, 16#ffff, AB, CD}) ->
   inet_parse:ntoa({AB bsr 8, AB rem 256, CD bsr 8, CD rem 256});
