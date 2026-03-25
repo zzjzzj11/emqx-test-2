@@ -395,9 +395,12 @@ produce_kafka_payload(Key, Message, Topic) ->
   MessageBody = jsx:encode(Message),
   io:format("[KAFKA PLUGIN]Message = ~s~n",[MessageBody]),
   io:format("[KAFKA PLUGIN]Topic = ~s~n",[Topic]),
-  AckCb = fun(Partition, BaseOffset) -> 
-            io:format(user, "\nProduced to partition ~p at base-offset ~p\n", [Partition, BaseOffset]) 
-          end,
+  AckCb = fun
+    (Partition, BaseOffset) -> 
+        logger:info("Produced to partition ~p at base-offset ~p", [Partition, BaseOffset]);
+    (Error) -> 
+        logger:error("Failed to produce message: ~p", [Error])
+  end,
   brod:produce_cb(client1, Topic, hash, Key, MessageBody, AckCb).
 
 %% 兼容旧接口，使用默认topic
