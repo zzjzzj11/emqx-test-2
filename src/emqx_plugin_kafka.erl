@@ -235,10 +235,16 @@ produce_kafka_msg(Message) ->
         _:_ -> undefined
       end
   end,
-  %% 根据优先级获取对应topic
+  %% 根据优先级获取对应topic和client
   Topic = get_kafka_topic(PriorityInt),
+  Client = case PriorityInt of
+    2 -> client3;
+    1 -> client2;
+    0 -> client1;
+    _ -> client1
+  end,
   %% 发送消息到对应topic
-  produce_kafka_payload(ClientId, Payload, Topic),
+  produce_kafka_payload(Client, ClientId, Payload, Topic),
   io:format("Publish ~p~n", [emqx_message:to_map(Message)]),
   {ok, Message}.
 %%---------------------message publish stop----------------------%%
@@ -397,19 +403,25 @@ unload() ->
   emqx:unhook('message.acked', {?MODULE, on_message_acked}),
   emqx:unhook('message.dropped', {?MODULE, on_message_dropped}).
 
-%% 兼容旧接口，使用默认topic
+%% 兼容旧接口，使用默认topic和client
 produce_kafka_payload(Key, Message) ->
   Topic = get_kafka_topic(),
-  produce_kafka_payload(Key, Message, Topic).
+  produce_kafka_payload(client1, Key, Message, Topic).
 
+%% 兼容旧接口，使用默认client
 produce_kafka_payload(Key, Message, Topic) ->
+  produce_kafka_payload(client1, Key, Message, Topic).
+
+%% 完整接口，支持指定client
+produce_kafka_payload(Client, Key, Message, Topic) ->
   MessageBody = jsx:encode(Message),
   io:format("[KAFKA PLUGIN]Message = ~s~n",[MessageBody]),
   io:format("[KAFKA PLUGIN]Topic = ~s~n",[Topic]),
+  io:format("[KAFKA PLUGIN]Client = ~p~n",[Client]),
   AckCb = fun(Partition, BaseOffset) -> 
         logger:info("Produced to partition ~p at base-offset ~p", [Partition, BaseOffset])
   end,
-  brod:produce_cb(client1, Topic, hash, Key, MessageBody, AckCb).
+  brod:produce_cb(Client, Topic, hash, Key, MessageBody, AckCb).
 
 ntoa({0, 0, 0, 0, 0, 16#ffff, AB, CD}) ->
   inet_parse:ntoa({AB bsr 8, AB rem 256, CD bsr 8, CD rem 256});
