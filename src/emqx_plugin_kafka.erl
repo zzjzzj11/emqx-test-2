@@ -391,6 +391,11 @@ unload() ->
   emqx:unhook('message.acked', {?MODULE, on_message_acked}),
   emqx:unhook('message.dropped', {?MODULE, on_message_dropped}).
 
+%% 兼容旧接口，使用默认topic
+produce_kafka_payload(Key, Message) ->
+  Topic = get_kafka_topic(),
+  produce_kafka_payload(Key, Message, Topic).
+
 produce_kafka_payload(Key, Message, Topic) ->
   MessageBody = jsx:encode(Message),
   io:format("[KAFKA PLUGIN]Message = ~s~n",[MessageBody]),
@@ -402,11 +407,6 @@ produce_kafka_payload(Key, Message, Topic) ->
         logger:error("Failed to produce message: ~p", [Error])
   end,
   brod:produce_cb(client1, Topic, hash, Key, MessageBody, AckCb).
-
-%% 兼容旧接口，使用默认topic
-produce_kafka_payload(Key, Message) ->
-  Topic = get_kafka_topic(),
-  produce_kafka_payload(Key, Message, Topic).
 
 ntoa({0, 0, 0, 0, 0, 16#ffff, AB, CD}) ->
   inet_parse:ntoa({AB bsr 8, AB rem 256, CD bsr 8, CD rem 256});
