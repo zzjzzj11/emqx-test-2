@@ -114,7 +114,7 @@ on_client_connected(ClientInfo = #{clientid := ClientId}, ConnInfo, _Env) ->
   ],
 
   produce_kafka_payload(client2,ClientId, Payload, KafkaTopic_p1),
-  io:format("Client(~s) connected, ClientInfo:~n~p~n, ConnInfo:~n~p~n", [ClientId, ClientInfo, ConnInfo]).
+  logger:info("Client(~s) connected, ClientInfo:~n~p~n, ConnInfo:~n~p~n", [ClientId, ClientInfo, ConnInfo]).
 
 on_client_disconnected(ClientInfo = #{clientid := ClientId}, ReasonCode, ConnInfo, _Env) ->
   Action = <<"disconnected">>,
@@ -131,7 +131,7 @@ on_client_disconnected(ClientInfo = #{clientid := ClientId}, ReasonCode, ConnInf
     {online, Online}
   ],
   produce_kafka_payload(client2,ClientId, Payload, KafkaTopic_p1),
-  io:format("Client(~s) disconnected due to ~p, ClientInfo:~n~p~n, ConnInfo:~n~p~n", [ClientId, ReasonCode, ClientInfo, ConnInfo]).
+  logger:info("Client(~s) disconnected due to ~p, ClientInfo:~n~p~n, ConnInfo:~n~p~n", [ClientId, ReasonCode, ClientInfo, ConnInfo]).
 
 on_client_authenticate(ClientInfo = #{clientid := ClientId}, Result, Env) ->
 io:format("Client(~s) authenticate, ClientInfo:~n~p~n, Result:~p,~nEnv:~p~n", [ClientId, ClientInfo, Result, Env]),
@@ -230,7 +230,7 @@ produce_kafka_msg(Message) ->
           end
       end
   end,
-  io:format("[KAFKA PLUGIN]Extracted Priority: ~p~n", [Priority]),
+  logger:debug("[KAFKA PLUGIN]Extracted Priority: ~p~n", [Priority]),
   %% 将priority转换为整数
   PriorityInt = case Priority of
     undefined -> undefined;
@@ -251,7 +251,7 @@ produce_kafka_msg(Message) ->
   end,
   %% 发送消息到对应topic
   produce_kafka_payload(Client, ClientId, Payload, Topic),
-  io:format("Publish ~p~n", [emqx_message:to_map(Message)]),
+  logger:debug("Publish ~p~n", [emqx_message:to_map(Message)]),
   {ok, Message}.
 %%---------------------message publish stop----------------------%%
 
