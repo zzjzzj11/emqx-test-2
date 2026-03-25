@@ -97,6 +97,7 @@ on_client_connected(ClientInfo = #{clientid := ClientId}, ConnInfo, _Env) ->
   %% Now = now_mill_secs(os:timestamp()),
   Now =  erlang:system_time(millisecond),
   Online = 1,
+  KafkaTopic_p1 = get_kafka_topic(1),
   Payload = [
     {action, Action},
     {device_id, ClientId},
@@ -108,7 +109,8 @@ on_client_connected(ClientInfo = #{clientid := ClientId}, ConnInfo, _Env) ->
     {ts, Now},
     {online, Online}
   ],
-  produce_kafka_payload(ClientId, Payload),
+
+  produce_kafka_payload(client2,ClientId, Payload, KafkaTopic_p1),
   io:format("Client(~s) connected, ClientInfo:~n~p~n, ConnInfo:~n~p~n", [ClientId, ClientInfo, ConnInfo]).
 
 on_client_disconnected(ClientInfo = #{clientid := ClientId}, ReasonCode, ConnInfo, _Env) ->
@@ -116,6 +118,7 @@ on_client_disconnected(ClientInfo = #{clientid := ClientId}, ReasonCode, ConnInf
   %% Now = now_mill_secs(os:timestamp()),
   Now =  erlang:system_time(millisecond),
   Online = 0,
+  KafkaTopic_p1 = get_kafka_topic(1),
   Payload = [
     {action, Action},
     {device_id, ClientId},
@@ -124,7 +127,7 @@ on_client_disconnected(ClientInfo = #{clientid := ClientId}, ReasonCode, ConnInf
     {ts, Now},
     {online, Online}
   ],
-  produce_kafka_payload(ClientId, Payload),
+  produce_kafka_payload(client2,ClientId, Payload, KafkaTopic_p1),
   io:format("Client(~s) disconnected due to ~p, ClientInfo:~n~p~n, ConnInfo:~n~p~n", [ClientId, ReasonCode, ClientInfo, ConnInfo]).
 
 on_client_authenticate(ClientInfo = #{clientid := ClientId}, Result, Env) ->
