@@ -352,11 +352,11 @@ kafka_init(_Env) ->
 get_topic_partitions(Client, Topic) ->
   case brod:get_partitions_count(Client, Topic) of
     {ok, Partitions} ->
-      io:format("[KAFKA PLUGIN]Topic ~s has ~p partitions~n", [Topic, Partitions]),
+      logger:info("[KAFKA PLUGIN]Topic ~s has ~p partitions~n", [Topic, Partitions]),
       %% 存储到ETS表
       ets:insert(?TOPIC_PARTITIONS, {Topic, Partitions});
     {error, Reason} ->
-      io:format("[KAFKA PLUGIN]Failed to get partitions count for topic ~s: ~p~n", [Topic, Reason])
+      logger:info("[KAFKA PLUGIN]Failed to get partitions count for topic ~s: ~p~n", [Topic, Reason])
   end.
 
 get_kafka_topic() ->
@@ -364,7 +364,7 @@ get_kafka_topic() ->
 
 %% 根据优先级获取对应的Kafka topic
 get_kafka_topic(Priority) ->
-  io:format("all envs: ~p~n", [application:get_all_env(emqx_plugin_kafka)]),
+  logger:debug("all envs: ~p~n", [application:get_all_env(emqx_plugin_kafka)]),
   {ok, CONF} =  application:get_env(emqx_plugin_kafka,kafka),
   DefaultTopic = maps:get(topic, CONF),
   case Priority of
@@ -380,10 +380,10 @@ format_payload(Message) ->
   Topic = Message#message.topic,
   Tail = string:right(binary_to_list(Topic), 4),
   RawType = string:equal(Tail, <<"_raw">>),
-  io:format("[KAFKA PLUGIN]Tail= ~s , RawType= ~s~n",[Tail,RawType]),
+  logger:debug("[KAFKA PLUGIN]Tail= ~s , RawType= ~s~n",[Tail,RawType]),
   ClientId = Message#message.from,
   MsgPayload = Message#message.payload,
-  io:format("[KAFKA PLUGIN]MsgPayload : ~s~n", [MsgPayload]),
+  logger:debug("[KAFKA PLUGIN]MsgPayload : ~s~n", [MsgPayload]),
   if
     RawType == true ->
       MsgPayload64 = list_to_binary(base64:encode_to_string(MsgPayload));
@@ -441,9 +441,9 @@ produce_kafka_payload(Key, Message, Topic) ->
 %% 完整接口，支持指定client
 produce_kafka_payload(Client, Key, Message, Topic) ->
   MessageBody = jsx:encode(Message),
-  io:format("[KAFKA PLUGIN]Message = ~s~n",[MessageBody]),
-  io:format("[KAFKA PLUGIN]Topic = ~s~n",[Topic]),
-  io:format("[KAFKA PLUGIN]Client = ~p~n",[Client]),
+  logger:debug("[KAFKA PLUGIN]Message = ~s~n",[MessageBody]),
+  logger:debug("[KAFKA PLUGIN]Topic = ~s~n",[Topic]),
+  logger:debug("[KAFKA PLUGIN]Client = ~p~n",[Client]),
   %% 随机选择partition
   Partition = case ets:lookup(?TOPIC_PARTITIONS, Topic) of
                 [{_, Partitions}] when Partitions > 0 ->
@@ -451,9 +451,9 @@ produce_kafka_payload(Client, Key, Message, Topic) ->
                 _ ->
                   random
               end,
-  io:format("[KAFKA PLUGIN]Selected partition: ~p~n", [Partition]),
+  logger:debug("[KAFKA PLUGIN]Selected partition: ~p~n", [Partition]),
   AckCb = fun(Partition, BaseOffset) -> 
-        logger:info("Produced to partition ~p at base-offset ~p", [Partition, BaseOffset])
+        logger:debug("Produced to partition ~p at base-offset ~p", [Partition, BaseOffset])
   end,
   brod:produce_cb(Client, Topic, Partition, Key, MessageBody, AckCb).
 
