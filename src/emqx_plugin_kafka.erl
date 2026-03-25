@@ -24,6 +24,9 @@
 %% for logging
 -include_lib("emqx/include/logger.hrl").
 
+%% 记录每个topic的partition数量
+-define(TOPIC_PARTITIONS, topic_partitions).
+
 -export([ load/1
         , unload/0
         ]).
@@ -318,6 +321,8 @@ on_session_terminated(_ClientInfo = #{clientid := ClientId}, Reason, SessInfo, _
 
 kafka_init(_Env) ->
   logger:info("Start to init emqx plugin kafka..... ~n"),
+  %% 初始化ETS表存储topic partition数量
+  ets:new(?TOPIC_PARTITIONS, [named_table, public, set]),
   %% Ensure crypto application is loaded first
   application:ensure_all_started(crypto),
   {ok, _} = application:ensure_all_started(crc32cer),
@@ -347,7 +352,9 @@ kafka_init(_Env) ->
 get_topic_partitions(Client, Topic) ->
   case brod:get_partitions_count(Client, Topic) of
     {ok, Partitions} ->
-      io:format("[KAFKA PLUGIN]Topic ~s has ~p partitions~n", [Topic, Partitions]);
+      io:format("[KAFKA PLUGIN]Topic ~s has ~p partitions~n", [Topic, Partitions]),
+      %% 存储到ETS表
+      ets:insert(?TOPIC_PARTITIONS, {Topic, Partitions});
     {error, Reason} ->
       io:format("[KAFKA PLUGIN]Failed to get partitions count for topic ~s: ~p~n", [Topic, Reason])
   end.
@@ -437,10 +444,18 @@ produce_kafka_payload(Client, Key, Message, Topic) ->
   io:format("[KAFKA PLUGIN]Message = ~s~n",[MessageBody]),
   io:format("[KAFKA PLUGIN]Topic = ~s~n",[Topic]),
   io:format("[KAFKA PLUGIN]Client = ~p~n",[Client]),
+  %% 随机选择partition
+  Partition = case ets:lookup(?TOPIC_PARTITIONS, Topic) of
+                [{_, Partitions}] when Partitions > 0 ->
+                  rand:uniform(Partitions) - 1;
+                _ ->
+                  random
+              end,
+  io:format("[KAFKA PLUGIN]Selected partition: ~p~n", [Partition]),
   AckCb = fun(Partition, BaseOffset) -> 
         logger:info("Produced to partition ~p at base-offset ~p", [Partition, BaseOffset])
   end,
-  brod:produce_cb(Client, Topic, random, Key, MessageBody, AckCb).
+  brod:produce_cb(Client, Topic, Partition, Key, MessageBody, AckCb).
 
 ntoa({0, 0, 0, 0, 0, 16#ffff, AB, CD}) ->
   inet_parse:ntoa({AB bsr 8, AB rem 256, CD bsr 8, CD rem 256});
