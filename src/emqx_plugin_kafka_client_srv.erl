@@ -454,9 +454,13 @@ restart_client(ClientId, Topic) ->
     end.
 
 %% @doc 获取 Kafka 地址列表（从 persistent_term 缓存读取）。
+%% 注意：persistent_term key 需与 emqx_plugin_kafka.erl 中的 ?CONFIG_KEY 保持一致。
 -spec get_address_list() -> [{string(), integer()}].
 get_address_list() ->
     case persistent_term:get({emqx_plugin_kafka, kafka_config}, undefined) of
-        undefined -> [{"localhost", 9092}];
-        Env -> translate(maps:get(address_list, Env))
+        undefined ->
+            logger:warning("[KAFKA PLUGIN]Kafka config not cached, using default localhost:9092"),
+            [{"localhost", 9092}];
+        Env ->
+            translate(maps:get(address_list, Env))
     end.
