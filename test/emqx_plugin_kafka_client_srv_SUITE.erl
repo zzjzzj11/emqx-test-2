@@ -35,6 +35,8 @@
         , t_handle_info_exit/1
         , t_handle_info_down/1
         , t_handle_producer_exit_normal/1
+        , t_monitor_one_restarting/1
+        , t_handle_info_setup_monitors/1
         ]).
 
 all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
@@ -46,7 +48,8 @@ all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
           t_handle_client_down, t_handle_producer_exit,
           t_init_health_monitoring,
           t_handle_info_probe_kafka, t_handle_info_exit,
-          t_handle_info_down, t_handle_producer_exit_normal].
+          t_handle_info_down, t_handle_producer_exit_normal,
+          t_monitor_one_restarting, t_handle_info_setup_monitors].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -72,6 +75,7 @@ init_per_testcase(_TestCase, Config) ->
 end_per_testcase(_TestCase, _Config) ->
     meck:unload(brod_sup),
     meck:unload(brod),
+    catch persistent_term:erase({emqx_plugin_kafka, kafka_config}),
     catch ets:delete(topic_partitions),
     catch ets:delete(kafka_circuit_breaker),
     catch ets:delete(kafka_metrics),
@@ -168,31 +172,41 @@ t_demonitor_all(_Config) ->
     emqx_plugin_kafka_client_srv:demonitor_all(Monitors),
     ok.
 
-%% @doc do_probe/1 should return ok when brod:get_partitions_count succeeds.
+%% @doc do_probe/1 should return ok when TCP connection to Kafka broker succeeds.
+%% Uses a real TCP listener to simulate a reachable Kafka broker.
 t_do_probe_success(_Config) ->
-    meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
-    meck:expect(brod, get_partitions_count, fun(_Client, _Topic) -> {ok, 3} end),
-    ?assertEqual(ok, emqx_plugin_kafka_client_srv:do_probe(client1)).
+    {ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+    {ok, Port} = inet:port(ListenSocket),
+    Address = list_to_binary("localhost:" ++ integer_to_list(Port)),
+    persistent_term:put({emqx_plugin_kafka, kafka_config}, #{address_list => Address}),
+    ?assertEqual(ok, emqx_plugin_kafka_client_srv:do_probe(client1)),
+    gen_tcp:close(ListenSocket),
+    ok.
 
-%% @doc do_probe/1 should return {error, Reason} when brod:get_partitions_count fails.
+%% @doc do_probe/1 should return {error, _} when all Kafka brokers are unreachable.
 t_do_probe_failure(_Config) ->
-    meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
-    meck:expect(brod, get_partitions_count, fun(_Client, _Topic) -> {error, no_leader} end),
+    persistent_term:put({emqx_plugin_kafka, kafka_config}, #{address_list => <<"localhost:19999">>}),
     Result = emqx_plugin_kafka_client_srv:do_probe(client1),
-    ?assertMatch({error, _}, Result).
+    ?assertMatch({error, _}, Result),
+    ok.
 
 %% @doc probe_kafka/1 should transition from down to up when probe succeeds.
+%% Uses a real TCP listener to simulate a reachable Kafka broker.
 t_probe_kafka_down_to_up(_Config) ->
     ets:new(kafka_circuit_breaker, [named_table, public, set]),
     ets:new(kafka_metrics, [named_table, public, set]),
     emqx_plugin_kafka:init_tables(),
     emqx_plugin_kafka_client_srv:init_health_metrics(),
+    {ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+    {ok, Port} = inet:port(ListenSocket),
+    Address = list_to_binary("localhost:" ++ integer_to_list(Port)),
+    persistent_term:put({emqx_plugin_kafka, kafka_config}, #{address_list => Address}),
     meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
-    meck:expect(brod, get_partitions_count, fun(_Client, _Topic) -> {ok, 3} end),
     DownState = emqx_plugin_kafka_client_srv:make_test_state(#{kafka_status => down}),
     NewState = emqx_plugin_kafka_client_srv:probe_kafka(DownState),
     ?assertEqual(up, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
     ?assertEqual(closed, ets:lookup_element(kafka_circuit_breaker, state, 2)),
+    gen_tcp:close(ListenSocket),
     ok.
 
 %% @doc restart_client/2 should restart client and producer, returning {ok, ClientId}.
@@ -288,17 +302,17 @@ t_init_health_monitoring(_Config) ->
     ok.
 
 %% @doc handle_info(probe_kafka, State) should trigger probe and reschedule.
+%% Uses an unreachable address so the TCP probe fails and status transitions to down.
 t_handle_info_probe_kafka(_Config) ->
     ets:new(kafka_circuit_breaker, [named_table, public, set]),
     ets:new(kafka_metrics, [named_table, public, set]),
     emqx_plugin_kafka:init_tables(),
     emqx_plugin_kafka_client_srv:init_health_metrics(),
-    meck:expect(brod, get_partitions_count, fun(_Client, _Topic) -> {ok, 3} end),
-    meck:expect(brod_sup, find_client, fun(_ClientId) -> [] end),
+    persistent_term:put({emqx_plugin_kafka, kafka_config}, #{address_list => <<"localhost:19999">>}),
     State = emqx_plugin_kafka_client_srv:make_test_state(
               #{clients => [client1], topics => [<<"t1">>], probe_interval => 50}),
     {noreply, NewState} = emqx_plugin_kafka_client_srv:handle_info(probe_kafka, State),
-    %% Verify probe was executed (status transitions to down because brod_sup:find_client returns [])
+    %% Verify probe failed: status transitions to down
     ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
     %% Verify probe rescheduled (message arrives in test process mailbox)
     receive
@@ -354,4 +368,27 @@ t_handle_producer_exit_normal(_Config) ->
     %% {shutdown, Reason} exit should not change state
     State3 = emqx_plugin_kafka_client_srv:handle_producer_exit(self(), {shutdown, test}, State2),
     ?assertEqual(up, emqx_plugin_kafka_client_srv:get_kafka_status(State3)),
+    ok.
+
+%% @doc monitor_one/1 should return false when brod_sup:find_client returns [restarting].
+%% This happens when the brod client is in the process of reconnecting.
+t_monitor_one_restarting(_Config) ->
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [restarting] end),
+    ?assertEqual(false, emqx_plugin_kafka_client_srv:monitor_one(client1)),
+    ok.
+
+%% @doc handle_info(setup_monitors, State) should set up monitors for unmonitored clients.
+%% This handles the race condition where brod clients aren't registered in brod_sup ETS
+%% when monitor_clients is first called in init/1.
+t_handle_info_setup_monitors(_Config) ->
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
+    State = emqx_plugin_kafka_client_srv:make_test_state(
+              #{clients => [client1, client2], monitors => []}),
+    ?assertEqual([], emqx_plugin_kafka_client_srv:get_monitors(State)),
+    {noreply, NewState} = emqx_plugin_kafka_client_srv:handle_info(setup_monitors, State),
+    ?assertEqual(2, length(emqx_plugin_kafka_client_srv:get_monitors(NewState))),
+    %% Idempotency: calling again when all clients are monitored should be a no-op
+    {noreply, UnchangedState} = emqx_plugin_kafka_client_srv:handle_info(setup_monitors, NewState),
+    ?assertEqual(2, length(emqx_plugin_kafka_client_srv:get_monitors(UnchangedState))),
+    emqx_plugin_kafka_client_srv:demonitor_all(emqx_plugin_kafka_client_srv:get_monitors(NewState)),
     ok.

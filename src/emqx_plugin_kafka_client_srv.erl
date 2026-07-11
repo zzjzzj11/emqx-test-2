@@ -123,6 +123,7 @@ init(Env) ->
     Monitors = monitor_clients(Clients),
     init_health_metrics(),
     schedule_probe(?PROBE_INTERVAL_MS),
+    erlang:send_after(2000, self(), setup_monitors),
     {ok, #state{clients = Clients, topics = Topics,
                 kafka_status = up, down_since = undefined,
                 probe_interval = ?PROBE_INTERVAL_MS, monitors = Monitors}}.
@@ -141,11 +142,14 @@ handle_cast(stop_clients, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-%% @doc 处理异步消息：probe_kafka 探测、DOWN 监控、EXIT 退出等。
+%% @doc 处理异步消息：probe_kafka 探测、setup_monitors 重试监控、DOWN 监控、EXIT 退出等。
 -spec handle_info(term(), #state{}) -> {noreply, #state{}}.
 handle_info(probe_kafka, State) ->
     NewState = probe_kafka(State),
     schedule_probe(NewState#state.probe_interval),
+    {noreply, NewState};
+handle_info(setup_monitors, State) ->
+    NewState = maybe_setup_monitors(State),
     {noreply, NewState};
 handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
     NewState = handle_down_by_ref(Ref, Reason, State),
@@ -331,13 +335,16 @@ monitor_clients(Clients) ->
 
 %% @doc 监控单个 brod client 进程。
 %% 通过 brod_sup:find_client/1 获取 PID，调用 erlang:monitor/2。
-%% 返回 {ClientId, Ref} 或 false（若 client 未运行）。
+%% 返回 {ClientId, Ref} 或 false（若 client 未运行或正在重启）。
 -spec monitor_one(atom()) -> {atom(), reference()} | false.
 monitor_one(ClientId) ->
     case brod_sup:find_client(ClientId) of
         [Pid] when is_pid(Pid) ->
             Ref = erlang:monitor(process, Pid),
             {ClientId, Ref};
+        [restarting] ->
+            logger:info("[KAFKA PLUGIN]Client ~p is restarting, skip monitor", [ClientId]),
+            false;
         [] ->
             false
     end.
@@ -348,6 +355,26 @@ monitor_one(ClientId) ->
 demonitor_all(Monitors) ->
     lists:foreach(fun({_, Ref}) -> erlang:demonitor(Ref, [flush]) end, Monitors),
     ok.
+
+%% @doc 重试监控未注册的 client 进程。
+%% 解决 init/1 中 monitor_clients 与 brod_sup 注册的竞态条件：
+%% brod:start_client/2 返回 ok 时，client 进程可能尚未注册到 brod_sup ETS。
+%% 此函数找出尚未监控的 client，补充设置 monitor。
+-spec maybe_setup_monitors(#state{}) -> #state{}.
+maybe_setup_monitors(State) ->
+    MonitoredClients = [C || {C, _} <- State#state.monitors],
+    Unmonitored = [C || C <- State#state.clients, not lists:member(C, MonitoredClients)],
+    case Unmonitored of
+        [] -> State;
+        _ ->
+            NewMonitors = monitor_clients(Unmonitored),
+            case NewMonitors of
+                [] -> State;
+                _ ->
+                    logger:info("[KAFKA PLUGIN]Setup monitors for ~p clients", [Unmonitored]),
+                    State#state{monitors = State#state.monitors ++ NewMonitors}
+            end
+    end.
 
 %% @doc 测试辅助函数：从 map 创建 #state{} 记录。
 %% 仅用于测试，生产代码不应调用。
@@ -366,33 +393,33 @@ make_test_state(Overrides) ->
               end, Base, Overrides).
 
 %% @doc 对单个 client 执行健康探测。
-%% 使用 brod:get_partitions_count/2 验证 Kafka 连通性。
-%% 从 topic_partitions ETS 取已知 topic，无则用 <<"probe">>。
+%% 使用 gen_tcp:connect/4 直接测试 Kafka broker 的 TCP 连通性，
+%% 不依赖 brod 缓存的元数据，能可靠检测 Kafka 不可达。
 -spec do_probe(atom()) -> ok | {error, term()}.
 do_probe(ClientId) ->
-    case brod_sup:find_client(ClientId) of
-        [Pid] when is_pid(Pid) ->
-            Topic = probe_topic(),
-            try brod:get_partitions_count(ClientId, Topic) of
-                {ok, _} -> ok;
-                {error, unknown_topic_or_partition} -> ok;
-                {error, Reason} -> {error, Reason}
-            catch
-                _:Reason -> {error, Reason}
-            end;
-        [] ->
-            {error, client_not_found}
-    end.
+    logger:debug("[KAFKA PLUGIN]Probing Kafka connectivity for client ~p", [ClientId]),
+    probe_kafka_connection().
 
-%% @doc 获取探测使用的 topic：优先从 ETS 取已知 topic，无则用 <<"probe">>。
--spec probe_topic() -> binary().
-probe_topic() ->
-    try ets:first(?TOPIC_PARTITIONS) of
-        '$end_of_table' -> <<"probe">>;
-        Topic when is_binary(Topic) -> Topic
-    catch
-        _:_ -> <<"probe">>
-    end.
+%% @doc 通过 TCP 连接测试 Kafka broker 连通性。
+%% 从 persistent_term 获取 Kafka 地址列表，逐个尝试连接。
+-spec probe_kafka_connection() -> ok | {error, term()}.
+probe_kafka_connection() ->
+    probe_tcp(get_address_list()).
+
+%% @doc 逐个尝试 TCP 连接 Kafka broker 地址列表。
+%% 任一地址连接成功即返回 ok，全部失败返回 {error, all_brokers_unreachable}。
+-spec probe_tcp([{string(), integer()}]) -> ok | {error, term()}.
+probe_tcp([{Host, Port} | Rest]) ->
+    case gen_tcp:connect(Host, Port, [binary, {active, false}], 2000) of
+        {ok, Socket} ->
+            gen_tcp:close(Socket),
+            ok;
+        {error, Reason} ->
+            logger:debug("[KAFKA PLUGIN]Probe ~s:~p failed: ~p", [Host, Port, Reason]),
+            probe_tcp(Rest)
+    end;
+probe_tcp([]) ->
+    {error, all_brokers_unreachable}.
 
 %% @doc 执行 Kafka 健康探测并返回新 State。
 %% 根据当前 kafka_status 和探测结果决定状态转换。
