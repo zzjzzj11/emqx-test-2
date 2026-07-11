@@ -16,9 +16,10 @@
 %% Test cases
 -export([ t_suite_loads/1
         , t_init_health_metrics/1
+        , t_schedule_probe/1
         ]).
 
-all() -> [t_suite_loads, t_init_health_metrics].
+all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -68,4 +69,16 @@ t_init_health_metrics(_Config) ->
     ?assertEqual(0, ets:lookup_element(kafka_metrics, last_down_at, 2)),
     ?assertEqual(0, ets:lookup_element(kafka_metrics, last_recovered_at, 2)),
     ?assertEqual(0, ets:lookup_element(kafka_metrics, reconnect_attempts, 2)),
+    ok.
+
+%% @doc schedule_probe/1 should send 'probe_kafka' message after the interval.
+t_schedule_probe(_Config) ->
+    emqx_plugin_kafka_client_srv:schedule_probe(50),
+    receive
+        probe_kafka ->
+            ok
+    after
+        1000 ->
+            ?assert(false)
+    end,
     ok.

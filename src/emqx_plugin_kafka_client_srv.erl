@@ -41,6 +41,7 @@
 
 %% Health monitoring (exported for testing and internal use)
 -export([ init_health_metrics/0
+        , schedule_probe/1
         ]).
 
 %% gen_server callbacks
@@ -248,4 +249,11 @@ init_health_metrics() ->
     ets:insert_new(kafka_metrics, {last_down_at, 0}),
     ets:insert_new(kafka_metrics, {last_recovered_at, 0}),
     ets:insert_new(kafka_metrics, {reconnect_attempts, 0}),
+    ok.
+
+%% @doc 调度下一次 Kafka 健康探测。
+%% 通过 erlang:send_after/3 发送 atom 消息 'probe_kafka' 到本进程。
+-spec schedule_probe(integer()) -> ok.
+schedule_probe(IntervalMs) ->
+    erlang:send_after(IntervalMs, self(), probe_kafka),
     ok.
