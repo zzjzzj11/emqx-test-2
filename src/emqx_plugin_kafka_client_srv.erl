@@ -26,6 +26,12 @@
 
 -define(TOPIC_PARTITIONS, topic_partitions).
 -define(SERVER, ?MODULE).
+%% 熔断器 ETS 表名（与 emqx_plugin_kafka 共享）
+-define(CB_TABLE, kafka_circuit_breaker).
+%% 探测周期：15 秒，比 30 秒熔断冷却时间短，能在 half_open 之前主动恢复
+-define(PROBE_INTERVAL_MS, 15000).
+%% 单次探测超时：5 秒，略大于 Kafka 默认 network timeout
+-define(PROBE_TIMEOUT_MS, 5000).
 
 %% API
 -export([ start_link/1
@@ -45,6 +51,14 @@
 %% States
 -record(state, { clients :: [atom()]
                , topics :: [binary()]
+               %% Kafka 整体健康状态：up 或 down
+               , kafka_status :: up | down
+               %% 上次故障时间戳 (ms)，undefined 表示未发生故障
+               , down_since :: integer() | undefined
+               %% 探测周期 (ms)
+               , probe_interval :: integer()
+               %% client 监控引用列表：[{ClientId, MonitorRef}]
+               , monitors :: [{atom(), reference()}]
                }).
 
 %%--------------------------------------------------------------------
@@ -88,7 +102,9 @@ init(Env) ->
             logger:error("[KAFKA PLUGIN]crc32cer NIF check failed, producers may fail: ~p", [Diag])
     end,
     {Clients, Topics} = start_all_clients(Env),
-    {ok, #state{clients = Clients, topics = Topics}}.
+    {ok, #state{clients = Clients, topics = Topics,
+                kafka_status = up, down_since = undefined,
+                probe_interval = ?PROBE_INTERVAL_MS, monitors = []}}.
 
 %% @doc 处理同步请求。
 -spec handle_call(term(), gen_server:from(), #state{}) ->
