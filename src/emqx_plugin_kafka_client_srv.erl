@@ -52,6 +52,8 @@
         , make_test_state/1
         , get_kafka_status/1
         , restart_client/2
+        , handle_client_down/3
+        , handle_producer_exit/3
         ]).
 
 %% gen_server callbacks
@@ -463,4 +465,34 @@ get_address_list() ->
             [{"localhost", 9092}];
         Env ->
             translate(maps:get(address_list, Env))
+    end.
+
+%% @doc 处理 client 进程崩溃事件（由 monitor 触发）。
+%% 记录故障，标记 Kafka down，等待下次 probe 周期重启。
+-spec handle_client_down(atom(), term(), #state{}) -> #state{}.
+handle_client_down(ClientId, Reason, State) ->
+    logger:warning("[KAFKA PLUGIN]Client ~p crashed: ~p", [ClientId, Reason]),
+    case State#state.kafka_status of
+        up ->
+            mark_kafka_down(State),
+            State#state{kafka_status = down,
+                        down_since = erlang:system_time(millisecond)};
+        down ->
+            State
+    end.
+
+%% @doc 处理 producer 进程崩溃事件（由 trap_exit 触发）。
+%% producer 崩溃通常意味着 Kafka 不可达，标记 Kafka down。
+-spec handle_producer_exit(pid(), term(), #state{}) -> #state{}.
+handle_producer_exit(Pid, Reason, State) ->
+    logger:warning("[KAFKA PLUGIN]Producer ~p exited: ~p", [Pid, Reason]),
+    case State#state.kafka_status of
+        up ->
+            mark_kafka_down(State),
+            demonitor_all(State#state.monitors),
+            State#state{kafka_status = down,
+                        down_since = erlang:system_time(millisecond),
+                        monitors = []};
+        down ->
+            State
     end.
