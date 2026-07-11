@@ -31,6 +31,8 @@
         , t_handle_client_down/1
         , t_handle_producer_exit/1
         , t_init_health_monitoring/1
+        , t_handle_info_probe_kafka/1
+        , t_handle_info_exit/1
         ]).
 
 all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
@@ -40,7 +42,8 @@ all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
           t_restart_client_success, t_restart_client_failure,
           t_restart_client_producer_failure,
           t_handle_client_down, t_handle_producer_exit,
-          t_init_health_monitoring].
+          t_init_health_monitoring,
+          t_handle_info_probe_kafka, t_handle_info_exit].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -279,4 +282,36 @@ t_init_health_monitoring(_Config) ->
     {trap_exit, TrapExit} = process_info(Pid, trap_exit),
     ?assertEqual(true, TrapExit),
     gen_server:stop(Pid),
+    ok.
+
+%% @doc handle_info(probe_kafka, State) should trigger probe and reschedule.
+t_handle_info_probe_kafka(_Config) ->
+    ets:new(kafka_circuit_breaker, [named_table, public, set]),
+    ets:new(kafka_metrics, [named_table, public, set]),
+    emqx_plugin_kafka:init_tables(),
+    emqx_plugin_kafka_client_srv:init_health_metrics(),
+    meck:expect(brod, get_partitions_count, fun(_Client, _Topic) -> {ok, 3} end),
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [] end),
+    State = emqx_plugin_kafka_client_srv:make_test_state(
+              #{clients => [client1], topics => [<<"t1">>], probe_interval => 50}),
+    emqx_plugin_kafka_client_srv:handle_info(probe_kafka, State),
+    %% Verify probe rescheduled (message arrives in test process mailbox)
+    receive
+        probe_kafka -> ok
+    after
+        1000 -> ?assert(false)
+    end,
+    ok.
+
+%% @doc handle_info({'EXIT', Pid, Reason}, State) should mark Kafka down.
+t_handle_info_exit(_Config) ->
+    ets:new(kafka_circuit_breaker, [named_table, public, set]),
+    ets:new(kafka_metrics, [named_table, public, set]),
+    emqx_plugin_kafka:init_tables(),
+    emqx_plugin_kafka_client_srv:init_health_metrics(),
+    State = emqx_plugin_kafka_client_srv:make_test_state(
+              #{clients => [client1], topics => [<<"t1">>]}),
+    {noreply, NewState} = emqx_plugin_kafka_client_srv:handle_info(
+                  {'EXIT', self(), {reached_max_retries, no_leader_connection}}, State),
+    ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
     ok.

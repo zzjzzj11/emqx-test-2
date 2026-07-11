@@ -143,8 +143,18 @@ handle_cast(stop_clients, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-%% @doc 处理异步消息。
+%% @doc 处理异步消息：probe_kafka 探测、DOWN 监控、EXIT 退出等。
 -spec handle_info(term(), #state{}) -> {noreply, #state{}}.
+handle_info(probe_kafka, State) ->
+    NewState = probe_kafka(State),
+    schedule_probe(State#state.probe_interval),
+    {noreply, NewState};
+handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
+    NewState = handle_down_by_ref(Ref, Reason, State),
+    {noreply, NewState};
+handle_info({'EXIT', Pid, Reason}, State) ->
+    NewState = handle_producer_exit(Pid, Reason, State),
+    {noreply, NewState};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -507,3 +517,16 @@ handle_producer_exit(Pid, Reason, State) ->
 -spec get_monitors(#state{}) -> [{atom(), reference()}].
 get_monitors(State) ->
     State#state.monitors.
+
+%% @doc 通过 MonitorRef 查找对应的 ClientId 并处理崩溃。
+-spec handle_down_by_ref(reference(), term(), #state{}) -> #state{}.
+handle_down_by_ref(Ref, Reason, State) ->
+    case lists:keyfind(Ref, 2, State#state.monitors) of
+        {ClientId, Ref} ->
+            NewMonitors = lists:delete({ClientId, Ref}, State#state.monitors),
+            handle_client_down(ClientId, Reason,
+                                State#state{monitors = NewMonitors});
+        false ->
+            logger:debug("[KAFKA PLUGIN]Unknown monitor ref down: ~p", [Ref]),
+            State
+    end.
