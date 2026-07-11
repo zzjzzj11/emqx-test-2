@@ -19,10 +19,14 @@
         , t_schedule_probe/1
         , t_mark_kafka_down/1
         , t_mark_kafka_up/1
+        , t_monitor_one/1
+        , t_monitor_clients/1
+        , t_demonitor_all/1
         ]).
 
 all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
-          t_mark_kafka_down, t_mark_kafka_up].
+          t_mark_kafka_down, t_mark_kafka_up,
+          t_monitor_one, t_monitor_clients, t_demonitor_all].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -118,4 +122,28 @@ t_mark_kafka_up(_Config) ->
     Now = erlang:system_time(millisecond),
     LastRecovered = ets:lookup_element(kafka_metrics, last_recovered_at, 2),
     ?assert(Now - LastRecovered < 5000),
+    ok.
+
+%% @doc monitor_one/1 should monitor the brod client PID and return {ClientId, Ref}.
+t_monitor_one(_Config) ->
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
+    {client1, Ref} = emqx_plugin_kafka_client_srv:monitor_one(client1),
+    ?assert(is_reference(Ref)),
+    erlang:demonitor(Ref),
+    ok.
+
+%% @doc monitor_clients/1 should monitor all clients and return list of {ClientId, Ref}.
+t_monitor_clients(_Config) ->
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
+    Monitors = emqx_plugin_kafka_client_srv:monitor_clients([client1, client2, client3]),
+    ?assertEqual(3, length(Monitors)),
+    [?assertEqual(true, is_tuple(M) andalso size(M) == 2) || M <- Monitors],
+    [erlang:demonitor(Ref) || {_, Ref} <- Monitors],
+    ok.
+
+%% @doc demonitor_all/1 should remove all monitors.
+t_demonitor_all(_Config) ->
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
+    Monitors = emqx_plugin_kafka_client_srv:monitor_clients([client1, client2]),
+    emqx_plugin_kafka_client_srv:demonitor_all(Monitors),
     ok.

@@ -44,6 +44,9 @@
         , schedule_probe/1
         , mark_kafka_down/1
         , mark_kafka_up/1
+        , monitor_clients/1
+        , monitor_one/1
+        , demonitor_all/1
         ]).
 
 %% gen_server callbacks
@@ -290,4 +293,37 @@ mark_kafka_up(_State) ->
         _:_ ->
             logger:error("[KAFKA PLUGIN]Failed to mark Kafka up (ETS table missing)")
     end,
+    ok.
+
+%% @doc 批量监控所有 client 进程，返回 {ClientId, MonitorRef} 列表。
+%% 使用 lists:filtermap/2 过滤掉未运行的 client（monitor_one 返回 false）。
+-spec monitor_clients([atom()]) -> [{atom(), reference()}].
+monitor_clients(Clients) ->
+    lists:filtermap(
+        fun(ClientId) ->
+            case monitor_one(ClientId) of
+                false -> false;
+                {_, _} = Monitor -> {true, Monitor}
+            end
+        end,
+        Clients).
+
+%% @doc 监控单个 brod client 进程。
+%% 通过 brod_sup:find_client/1 获取 PID，调用 erlang:monitor/2。
+%% 返回 {ClientId, Ref} 或 false（若 client 未运行）。
+-spec monitor_one(atom()) -> {atom(), reference()} | false.
+monitor_one(ClientId) ->
+    case brod_sup:find_client(ClientId) of
+        [Pid] when is_pid(Pid) ->
+            Ref = erlang:monitor(process, Pid),
+            {ClientId, Ref};
+        [] ->
+            false
+    end.
+
+%% @doc 清除所有 monitor 引用。
+%% 使用 [flush] 选项清除任何待处理的 'DOWN' 消息。
+-spec demonitor_all([{atom(), reference()}]) -> ok.
+demonitor_all(Monitors) ->
+    lists:foreach(fun({_, Ref}) -> erlang:demonitor(Ref, [flush]) end, Monitors),
     ok.
