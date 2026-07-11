@@ -266,11 +266,9 @@ t_init_health_monitoring(_Config) ->
     meck:expect(brod, start_producer, fun(_ClientId, _Topic, _Opts) -> ok end),
     meck:expect(brod, get_partitions_count, fun(_ClientId, _Topic) -> {ok, 3} end),
     meck:expect(brod_sup, find_client, fun(_ClientId) -> [] end),
+    meck:expect(brod, stop_client, fun(_ClientId) -> ok end),
     Env = #{address_list => <<"localhost:9092">>,
             topic_low => <<"t-low">>, topic_medium => <<"t-med">>, topic_high => <<"t-high">>},
-    %% Pre-create ETS tables as emqx_plugin_kafka:load/1 would
-    catch ets:new(kafka_circuit_breaker, [named_table, public, set]),
-    catch ets:new(kafka_metrics, [named_table, public, set]),
     emqx_plugin_kafka:init_tables(),
     {ok, Pid} = emqx_plugin_kafka_client_srv:start_link(Env),
     %% Verify process is alive
