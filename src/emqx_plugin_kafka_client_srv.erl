@@ -54,6 +54,7 @@
         , restart_client/2
         , handle_client_down/3
         , handle_producer_exit/3
+        , get_monitors/1
         ]).
 
 %% gen_server callbacks
@@ -496,3 +497,8 @@ handle_producer_exit(Pid, Reason, State) ->
         down ->
             State
     end.
+
+%% @doc 测试辅助：从 state 读取 monitors 字段。
+-spec get_monitors(#state{}) -> [{atom(), reference()}].
+get_monitors(State) ->
+    State#state.monitors.

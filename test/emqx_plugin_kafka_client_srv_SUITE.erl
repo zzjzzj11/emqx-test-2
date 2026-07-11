@@ -225,18 +225,35 @@ t_handle_client_down(_Config) ->
                   client1, {exit, crashed}, State),
     ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
     ?assertEqual(open, ets:lookup_element(kafka_circuit_breaker, state, 2)),
+    %% Idempotency: calling again when already down should be a no-op
+    DownCount1 = ets:lookup_element(kafka_metrics, kafka_down_count, 2),
+    UnchangedState = emqx_plugin_kafka_client_srv:handle_client_down(
+                       client1, {exit, crashed}, NewState),
+    ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(UnchangedState)),
+    ?assertEqual(DownCount1, ets:lookup_element(kafka_metrics, kafka_down_count, 2)),
     ok.
 
-%% @doc handle_producer_exit/3 should mark Kafka down on producer crash.
+%% @doc handle_producer_exit/3 should mark Kafka down on producer crash and clear monitors.
 t_handle_producer_exit(_Config) ->
     ets:new(kafka_circuit_breaker, [named_table, public, set]),
     ets:new(kafka_metrics, [named_table, public, set]),
     emqx_plugin_kafka:init_tables(),
     emqx_plugin_kafka_client_srv:init_health_metrics(),
+    TestRef = make_ref(),
     State = emqx_plugin_kafka_client_srv:make_test_state(
-              #{clients => [client1], topics => [<<"t1">>]}),
+              #{clients => [client1], topics => [<<"t1">>],
+                monitors => [{client1, TestRef}]}),
+    ?assertEqual([{client1, TestRef}],
+                 emqx_plugin_kafka_client_srv:get_monitors(State)),
     NewState = emqx_plugin_kafka_client_srv:handle_producer_exit(
                   self(), {reached_max_retries, no_leader_connection}, State),
     ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
     ?assertEqual(open, ets:lookup_element(kafka_circuit_breaker, state, 2)),
+    ?assertEqual([], emqx_plugin_kafka_client_srv:get_monitors(NewState)),
+    %% Idempotency: calling again when already down should be a no-op
+    DownCount1 = ets:lookup_element(kafka_metrics, kafka_down_count, 2),
+    UnchangedState = emqx_plugin_kafka_client_srv:handle_producer_exit(
+                       self(), {reached_max_retries, no_leader_connection}, NewState),
+    ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(UnchangedState)),
+    ?assertEqual(DownCount1, ets:lookup_element(kafka_metrics, kafka_down_count, 2)),
     ok.
