@@ -33,6 +33,7 @@
         , t_init_health_monitoring/1
         , t_handle_info_probe_kafka/1
         , t_handle_info_exit/1
+        , t_handle_info_down/1
         ]).
 
 all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
@@ -43,7 +44,8 @@ all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
           t_restart_client_producer_failure,
           t_handle_client_down, t_handle_producer_exit,
           t_init_health_monitoring,
-          t_handle_info_probe_kafka, t_handle_info_exit].
+          t_handle_info_probe_kafka, t_handle_info_exit,
+          t_handle_info_down].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -294,7 +296,9 @@ t_handle_info_probe_kafka(_Config) ->
     meck:expect(brod_sup, find_client, fun(_ClientId) -> [] end),
     State = emqx_plugin_kafka_client_srv:make_test_state(
               #{clients => [client1], topics => [<<"t1">>], probe_interval => 50}),
-    emqx_plugin_kafka_client_srv:handle_info(probe_kafka, State),
+    {noreply, NewState} = emqx_plugin_kafka_client_srv:handle_info(probe_kafka, State),
+    %% Verify probe was executed (status transitions to down because brod_sup:find_client returns [])
+    ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
     %% Verify probe rescheduled (message arrives in test process mailbox)
     receive
         probe_kafka -> ok
@@ -314,4 +318,20 @@ t_handle_info_exit(_Config) ->
     {noreply, NewState} = emqx_plugin_kafka_client_srv:handle_info(
                   {'EXIT', self(), {reached_max_retries, no_leader_connection}}, State),
     ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
+    ok.
+
+%% @doc handle_info({'DOWN', Ref, ...}, State) should mark Kafka down and clear monitors.
+t_handle_info_down(_Config) ->
+    ets:new(kafka_circuit_breaker, [named_table, public, set]),
+    ets:new(kafka_metrics, [named_table, public, set]),
+    emqx_plugin_kafka:init_tables(),
+    emqx_plugin_kafka_client_srv:init_health_metrics(),
+    TestRef = make_ref(),
+    State = emqx_plugin_kafka_client_srv:make_test_state(
+              #{clients => [client1], topics => [<<"t1">>],
+                monitors => [{client1, TestRef}]}),
+    {noreply, NewState} = emqx_plugin_kafka_client_srv:handle_info(
+                  {'DOWN', TestRef, process, self(), crashed}, State),
+    ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
+    ?assertEqual([], emqx_plugin_kafka_client_srv:get_monitors(NewState)),
     ok.

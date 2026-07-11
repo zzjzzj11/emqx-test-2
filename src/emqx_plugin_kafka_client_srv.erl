@@ -147,7 +147,7 @@ handle_cast(_Msg, State) ->
 -spec handle_info(term(), #state{}) -> {noreply, #state{}}.
 handle_info(probe_kafka, State) ->
     NewState = probe_kafka(State),
-    schedule_probe(State#state.probe_interval),
+    schedule_probe(NewState#state.probe_interval),
     {noreply, NewState};
 handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
     NewState = handle_down_by_ref(Ref, Reason, State),
@@ -491,8 +491,10 @@ handle_client_down(ClientId, Reason, State) ->
     case State#state.kafka_status of
         up ->
             mark_kafka_down(State),
+            demonitor_all(State#state.monitors),
             State#state{kafka_status = down,
-                        down_since = erlang:system_time(millisecond)};
+                        down_since = erlang:system_time(millisecond),
+                        monitors = []};
         down ->
             State
     end.
