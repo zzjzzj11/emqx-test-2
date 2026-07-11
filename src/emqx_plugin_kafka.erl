@@ -40,6 +40,7 @@
 -export([ load/1
         , unload/0
         , get_metrics/0
+        , init_tables/0
         ]).
 
 %% Client Lifecircle Hooks
