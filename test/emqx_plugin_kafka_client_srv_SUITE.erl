@@ -34,6 +34,7 @@
         , t_handle_info_probe_kafka/1
         , t_handle_info_exit/1
         , t_handle_info_down/1
+        , t_handle_producer_exit_normal/1
         ]).
 
 all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
@@ -45,7 +46,7 @@ all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
           t_handle_client_down, t_handle_producer_exit,
           t_init_health_monitoring,
           t_handle_info_probe_kafka, t_handle_info_exit,
-          t_handle_info_down].
+          t_handle_info_down, t_handle_producer_exit_normal].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -334,4 +335,23 @@ t_handle_info_down(_Config) ->
                   {'DOWN', TestRef, process, self(), crashed}, State),
     ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
     ?assertEqual([], emqx_plugin_kafka_client_srv:get_monitors(NewState)),
+    ok.
+
+%% @doc handle_producer_exit/3 should ignore normal/shutdown exit reasons.
+t_handle_producer_exit_normal(_Config) ->
+    ets:new(kafka_circuit_breaker, [named_table, public, set]),
+    ets:new(kafka_metrics, [named_table, public, set]),
+    emqx_plugin_kafka:init_tables(),
+    emqx_plugin_kafka_client_srv:init_health_metrics(),
+    State = emqx_plugin_kafka_client_srv:make_test_state(
+              #{clients => [client1], topics => [<<"t1">>]}),
+    %% normal exit should not change state
+    State1 = emqx_plugin_kafka_client_srv:handle_producer_exit(self(), normal, State),
+    ?assertEqual(up, emqx_plugin_kafka_client_srv:get_kafka_status(State1)),
+    %% shutdown exit should not change state
+    State2 = emqx_plugin_kafka_client_srv:handle_producer_exit(self(), shutdown, State1),
+    ?assertEqual(up, emqx_plugin_kafka_client_srv:get_kafka_status(State2)),
+    %% {shutdown, Reason} exit should not change state
+    State3 = emqx_plugin_kafka_client_srv:handle_producer_exit(self(), {shutdown, test}, State2),
+    ?assertEqual(up, emqx_plugin_kafka_client_srv:get_kafka_status(State3)),
     ok.

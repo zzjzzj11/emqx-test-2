@@ -30,8 +30,6 @@
 -define(CB_TABLE, kafka_circuit_breaker).
 %% 探测周期：15 秒，比 30 秒熔断冷却时间短，能在 half_open 之前主动恢复
 -define(PROBE_INTERVAL_MS, 15000).
-%% 单次探测超时：5 秒，略大于 Kafka 默认 network timeout
--define(PROBE_TIMEOUT_MS, 5000).
 
 %% API
 -export([ start_link/1
@@ -501,7 +499,14 @@ handle_client_down(ClientId, Reason, State) ->
 
 %% @doc 处理 producer 进程崩溃事件（由 trap_exit 触发）。
 %% producer 崩溃通常意味着 Kafka 不可达，标记 Kafka down。
+%% 忽略 normal/shutdown 等正常退出原因。
 -spec handle_producer_exit(pid(), term(), #state{}) -> #state{}.
+handle_producer_exit(_Pid, normal, State) ->
+    State;
+handle_producer_exit(_Pid, shutdown, State) ->
+    State;
+handle_producer_exit(_Pid, {shutdown, _}, State) ->
+    State;
 handle_producer_exit(Pid, Reason, State) ->
     logger:warning("[KAFKA PLUGIN]Producer ~p exited: ~p", [Pid, Reason]),
     case State#state.kafka_status of
