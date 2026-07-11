@@ -39,6 +39,10 @@
         , stop_clients/0
         ]).
 
+%% Health monitoring (exported for testing and internal use)
+-export([ init_health_metrics/0
+        ]).
+
 %% gen_server callbacks
 -export([ init/1
         , handle_call/3
@@ -230,3 +234,18 @@ translate(AddressList) ->
     end,
     S = string:tokens(binary_to_list(AddressList), ","),
     [Fun(S1) || S1 <- S].
+
+%%--------------------------------------------------------------------
+%% Health monitoring functions
+%%--------------------------------------------------------------------
+
+%% @doc 初始化健康监控相关的 ETS 条目。
+%% 使用 insert_new 确保幂等：若条目已存在则不覆盖。
+-spec init_health_metrics() -> ok.
+init_health_metrics() ->
+    ets:insert_new(kafka_metrics, {kafka_status, up}),
+    ets:insert_new(kafka_metrics, {kafka_down_count, 0}),
+    ets:insert_new(kafka_metrics, {last_down_at, 0}),
+    ets:insert_new(kafka_metrics, {last_recovered_at, 0}),
+    ets:insert_new(kafka_metrics, {reconnect_attempts, 0}),
+    ok.

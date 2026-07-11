@@ -14,9 +14,11 @@
         ]).
 
 %% Test cases
--export([ t_suite_loads/1 ]).
+-export([ t_suite_loads/1
+        , t_init_health_metrics/1
+        ]).
 
-all() -> [t_suite_loads].
+all() -> [t_suite_loads, t_init_health_metrics].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -54,4 +56,16 @@ end_per_testcase(_TestCase, _Config) ->
 t_suite_loads(_Config) ->
     ?assertEqual(emqx_plugin_kafka_client_srv,
                  emqx_plugin_kafka_client_srv:module_info(module)),
+    ok.
+
+%% @doc init_health_metrics/0 should create all required ETS entries in kafka_metrics.
+t_init_health_metrics(_Config) ->
+    %% Create the kafka_metrics table (normally done by emqx_plugin_kafka:init_tables/0)
+    ets:new(kafka_metrics, [named_table, public, set]),
+    emqx_plugin_kafka_client_srv:init_health_metrics(),
+    ?assertEqual(up, ets:lookup_element(kafka_metrics, kafka_status, 2)),
+    ?assertEqual(0, ets:lookup_element(kafka_metrics, kafka_down_count, 2)),
+    ?assertEqual(0, ets:lookup_element(kafka_metrics, last_down_at, 2)),
+    ?assertEqual(0, ets:lookup_element(kafka_metrics, last_recovered_at, 2)),
+    ?assertEqual(0, ets:lookup_element(kafka_metrics, reconnect_attempts, 2)),
     ok.
