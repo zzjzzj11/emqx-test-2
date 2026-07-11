@@ -51,6 +51,7 @@
         , probe_kafka/1
         , make_test_state/1
         , get_kafka_status/1
+        , restart_client/2
         ]).
 
 %% gen_server callbacks
@@ -426,3 +427,36 @@ first_client(State) ->
 -spec get_kafka_status(#state{}) -> up | down.
 get_kafka_status(State) ->
     State#state.kafka_status.
+
+%% @doc 重启单个 brod client 与 producer。
+%% 先停止旧 client（若存在），再重新启动。
+%% 返回 {ok, ClientId} 或 {error, Reason}。
+-spec restart_client(atom(), binary()) -> {ok, atom()} | {error, term()}.
+restart_client(ClientId, Topic) ->
+    catch brod:stop_client(ClientId),
+    case brod:start_client(get_address_list(), ClientId) of
+        ok ->
+            case brod:start_producer(ClientId, Topic, []) of
+                ok ->
+                    try get_topic_partitions(ClientId, Topic)
+                    catch _:_ -> ok
+                    end,
+                    {ok, ClientId};
+                {error, Reason} ->
+                    logger:error("[KAFKA PLUGIN]Failed to restart producer for ~p: ~p",
+                                 [ClientId, Reason]),
+                    {error, Reason}
+            end;
+        {error, Reason} ->
+            logger:error("[KAFKA PLUGIN]Failed to restart client ~p: ~p",
+                         [ClientId, Reason]),
+            {error, Reason}
+    end.
+
+%% @doc 获取 Kafka 地址列表（从 persistent_term 缓存读取）。
+-spec get_address_list() -> [{string(), integer()}].
+get_address_list() ->
+    case persistent_term:get({emqx_plugin_kafka, kafka_config}, undefined) of
+        undefined -> [{"localhost", 9092}];
+        Env -> translate(maps:get(address_list, Env))
+    end.

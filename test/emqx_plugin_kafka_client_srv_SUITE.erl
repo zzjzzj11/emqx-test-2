@@ -25,12 +25,15 @@
         , t_do_probe_success/1
         , t_do_probe_failure/1
         , t_probe_kafka_down_to_up/1
+        , t_restart_client_success/1
+        , t_restart_client_failure/1
         ]).
 
 all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
           t_mark_kafka_down, t_mark_kafka_up,
           t_monitor_one, t_monitor_clients, t_demonitor_all,
-          t_do_probe_success, t_do_probe_failure, t_probe_kafka_down_to_up].
+          t_do_probe_success, t_do_probe_failure, t_probe_kafka_down_to_up,
+          t_restart_client_success, t_restart_client_failure].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -178,3 +181,17 @@ t_probe_kafka_down_to_up(_Config) ->
     ?assertEqual(up, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
     ?assertEqual(closed, ets:lookup_element(kafka_circuit_breaker, state, 2)),
     ok.
+
+%% @doc restart_client/2 should restart client and producer, returning {ok, ClientId}.
+t_restart_client_success(_Config) ->
+    meck:expect(brod, start_client, fun(_Addrs, _ClientId) -> ok end),
+    meck:expect(brod, start_producer, fun(_ClientId, _Topic, _Opts) -> ok end),
+    meck:expect(brod, get_partitions_count, fun(_ClientId, _Topic) -> {ok, 3} end),
+    Result = emqx_plugin_kafka_client_srv:restart_client(client1, <<"test-topic">>),
+    ?assertEqual({ok, client1}, Result).
+
+%% @doc restart_client/2 should return {error, Reason} when brod:start_client fails.
+t_restart_client_failure(_Config) ->
+    meck:expect(brod, start_client, fun(_Addrs, _ClientId) -> {error, no_leader} end),
+    Result = emqx_plugin_kafka_client_srv:restart_client(client1, <<"test-topic">>),
+    ?assertMatch({error, _}, Result).
