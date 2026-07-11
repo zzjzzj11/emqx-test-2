@@ -26,6 +26,7 @@
 
 start(_StartType, _StartArgs) ->
     Cnf = get_kafka_config(),
+    emqx_plugin_kafka_nif_loader:ensure_nif_loaded(),
     {ok, Sup} = emqx_plugin_kafka_sup:start_link(Cnf),
     emqx_plugin_kafka:load(Cnf),
     {ok, Sup}.

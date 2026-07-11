@@ -79,7 +79,6 @@ init(Env) ->
     logger:info("[KAFKA PLUGIN]Start to init emqx plugin kafka client srv..... ~n"),
     ets:new(?TOPIC_PARTITIONS, [named_table, public, set]),
     {ok, _} = application:ensure_all_started(crypto),
-    emqx_plugin_kafka_nif_loader:ensure_nif_loaded(),
     {ok, _} = application:ensure_all_started(crc32cer),
     {ok, _} = application:ensure_all_started(brod),
     case emqx_plugin_kafka_health:check_crc32cer_nif() of
