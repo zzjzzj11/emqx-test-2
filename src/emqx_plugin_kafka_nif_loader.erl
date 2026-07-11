@@ -11,48 +11,58 @@
 ]).
 
 %% @doc Ensures the crc32cer NIF is loaded for the current architecture.
-%% CRITICAL: Must check if NIF already works BEFORE copying .so.
-%% Overwriting a .so that is currently loaded/memory-mapped causes SIGSEGV.
-%% This happens on container restart when the correct .so was placed on
-%% the first boot — on_load loads it, and file:copy then overwrites it.
+%%
+%% CRITICAL: Calling crc32cer:nif/1 when the module is NOT yet loaded
+%% triggers auto-load, which runs on_load → erlang:load_nif → dlopen,
+%% memory-mapping the .so. If the NIF is broken (dlopen succeeded but
+%% init failed), the .so stays mapped. A subsequent file:copy that
+%% truncates the mapped file causes SIGSEGV (exit 139).
+%%
+%% Fix: Check is_module_loaded(crc32cer) BEFORE calling nif_already_working().
+%% If the module is not loaded, the .so is NOT mapped — safe to copy.
+%% If the module IS loaded, check NIF; if broken, use safe rename-based
+%% copy (temp + rename) which preserves the old inode for dlopen.
 -spec ensure_nif_loaded() -> ok | {error, term()}.
 ensure_nif_loaded() ->
     Arch0 = erlang:system_info(system_architecture),
     Arch = unicode:characters_to_binary(Arch0),
     log("NIF loader started, architecture: ~s (raw: ~p)", [Arch, Arch0]),
-    case nif_already_working() of
-        true ->
-            log("crc32cer NIF already working, skipping .so placement", []),
-            ok;
+    case is_module_loaded(crc32cer) of
         false ->
-            place_and_load(Arch)
+            %% Module not loaded — .so is NOT memory-mapped, safe to copy
+            log("crc32cer not yet loaded, placing .so before first load", []),
+            case place_so(Arch) of
+                ok -> load_crc32cer_fresh();
+                {error, _} = Err -> Err
+            end;
+        true ->
+            %% Module already loaded — calling nif_already_working/0 is safe
+            %% (won't trigger auto-load since module is already loaded)
+            case nif_already_working() of
+                true ->
+                    log("crc32cer NIF already working, skipping .so placement", []),
+                    ok;
+                false ->
+                    %% Module loaded but NIF broken — .so MAY be memory-mapped.
+                    %% Use safe rename-based copy, then purge+reload.
+                    log("crc32cer loaded but NIF broken, reloading...", []),
+                    case place_so(Arch) of
+                        ok -> reload_crc32cer();
+                        {error, _} = Err -> Err
+                    end
+            end
     end.
 
-%% @doc Places the correct .so and loads/reloads crc32cer as needed.
--spec place_and_load(binary()) -> ok | {error, term()}.
-place_and_load(Arch) ->
+%% @doc Places the architecture-specific .so using safe rename-based copy.
+%% Returns ok if the .so was placed (or already correct), {error, _} on failure.
+-spec place_so(binary()) -> ok | {error, term()}.
+place_so(Arch) ->
     case arch_to_so_name(Arch) of
         undefined ->
             log("ERROR: Unsupported architecture: ~s", [Arch]),
             {error, {unsupported_arch, Arch}};
         SoName ->
-            case place_arch_so(SoName) of
-                ok -> handle_nif_after_placement();
-                {error, _} = Err -> Err
-            end
-    end.
-
-%% @doc Handles NIF state after .so is placed.
-%% Checks module load state BEFORE calling any crc32cer function to avoid
-%% triggering auto-load (which can segfault the VM during on_load).
--spec handle_nif_after_placement() -> ok | {error, term()}.
-handle_nif_after_placement() ->
-    case is_module_loaded(crc32cer) of
-        false ->
-            log("crc32cer not yet loaded, loading with .so in place...", []),
-            load_crc32cer_fresh();
-        true ->
-            check_and_maybe_reload()
+            place_arch_so(SoName)
     end.
 
 %% @doc Loads crc32cer for the first time using code:load_file.
@@ -75,19 +85,9 @@ load_crc32cer_fresh() ->
             {error, {load_failed, Reason}}
     end.
 
-%% @doc Checks if NIF works for an already-loaded module; reloads if broken.
--spec check_and_maybe_reload() -> ok | {error, term()}.
-check_and_maybe_reload() ->
-    case nif_already_working() of
-        true ->
-            log("crc32cer NIF already working", []),
-            ok;
-        false ->
-            log("crc32cer loaded but NIF broken, reloading...", []),
-            reload_crc32cer()
-    end.
-
 %% @doc Checks if the NIF is already functional.
+%% CAUTION: Calling this when crc32cer is NOT loaded triggers auto-load!
+%% Always check is_module_loaded(crc32cer) first.
 -spec nif_already_working() -> boolean().
 nif_already_working() ->
     try crc32cer:nif(<<>>) of
@@ -130,24 +130,40 @@ place_arch_so(SoName) ->
             copy_so_file(Src, Dst, SoName)
     end.
 
-%% @doc Copies a single .so file from source to the expected crc32cer path.
+%% @doc Copies a single .so file using temp file + atomic rename.
+%%
+%% On Linux, rename(2) is atomic: the old inode is preserved for any
+%% process that has it open or memory-mapped (via dlopen). The new file
+%% takes its place in the directory. This prevents SIGSEGV when the old
+%% .so is still dlopen-mapped by a previously loaded crc32cer module.
+%%
+%% In contrast, file:copy/2 uses open(O_WRONLY|O_TRUNC) which truncates
+%% the existing file, invalidating any memory mapping → SIGSEGV.
 -spec copy_so_file(file:filename(), file:filename(), binary()) -> ok | {error, term()}.
 copy_so_file(SrcDir, DstDir, SoName) ->
     Src = filename:join(SrcDir, SoName),
     Dst = filename:join(DstDir, "crc32cer_nif.so"),
+    Tmp = filename:join(DstDir, "crc32cer_nif.so.tmp"),
     case file:read_file_info(Src) of
         {ok, _} ->
-            case file:copy(Src, Dst) of
+            case file:copy(Src, Tmp) of
                 {ok, _} ->
-                    log("Placed NIF ~s -> ~s", [Src, Dst]),
-                    ok;
-                {error, Reason} ->
+                    case file:rename(Tmp, Dst) of
+                        ok ->
+                            log("Placed NIF ~s -> ~s (via rename)", [Src, Dst]),
+                            ok;
+                        {error, Reason} = Err ->
+                            log("ERROR: Failed to rename NIF ~s -> ~s: ~p", [Tmp, Dst, Reason]),
+                            file:delete(Tmp),
+                            Err
+                    end;
+                {error, Reason} = Err ->
                     log("ERROR: Failed to copy NIF ~s: ~p", [Src, Reason]),
-                    {error, {copy_failed, Reason}}
+                    Err
             end;
-        {error, Reason} ->
+        {error, Reason} = Err ->
             log("ERROR: Source NIF not found ~s: ~p", [Src, Reason]),
-            {error, {src_not_found, Src, Reason}}
+            Err
     end.
 
 %% @doc Purges and reloads crc32cer to re-trigger on_load with the new .so.
