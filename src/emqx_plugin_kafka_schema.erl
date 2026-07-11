@@ -83,6 +83,31 @@ fields(kafka) ->
                     required => false,
                     desc => ?DESC(topic)
                 }
+            )},
+        %% 优先级 topic，未配置时回退到 topic
+        {topic_low,
+            ?HOCON(
+                string(),
+                #{
+                    required => false,
+                    desc => ?DESC(topic_low)
+                }
+            )},
+        {topic_medium,
+            ?HOCON(
+                string(),
+                #{
+                    required => false,
+                    desc => ?DESC(topic_medium)
+                }
+            )},
+        {topic_high,
+            ?HOCON(
+                string(),
+                #{
+                    required => false,
+                    desc => ?DESC(topic_high)
+                }
             )}
     ].
 

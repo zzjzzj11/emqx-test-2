@@ -25,8 +25,8 @@
         ]).
 
 start(_StartType, _StartArgs) ->
-    {ok, Sup} = emqx_plugin_kafka_sup:start_link(),
     Cnf = get_kafka_config(),
+    {ok, Sup} = emqx_plugin_kafka_sup:start_link(Cnf),
     emqx_plugin_kafka:load(Cnf),
     {ok, Sup}.
 stop(_State) ->
