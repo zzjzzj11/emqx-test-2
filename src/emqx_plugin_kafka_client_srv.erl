@@ -47,6 +47,10 @@
         , monitor_clients/1
         , monitor_one/1
         , demonitor_all/1
+        , do_probe/1
+        , probe_kafka/1
+        , make_test_state/1
+        , get_kafka_status/1
         ]).
 
 %% gen_server callbacks
@@ -327,3 +331,98 @@ monitor_one(ClientId) ->
 demonitor_all(Monitors) ->
     lists:foreach(fun({_, Ref}) -> erlang:demonitor(Ref, [flush]) end, Monitors),
     ok.
+
+%% @doc 测试辅助函数：从 map 创建 #state{} 记录。
+%% 仅用于测试，生产代码不应调用。
+-spec make_test_state(map()) -> #state{}.
+make_test_state(Overrides) ->
+    Base = #state{clients = [], topics = [],
+                  kafka_status = up, down_since = undefined,
+                  probe_interval = ?PROBE_INTERVAL_MS, monitors = []},
+    maps:fold(fun(kafka_status, V, S) -> S#state{kafka_status = V};
+                 (down_since, V, S) -> S#state{down_since = V};
+                 (probe_interval, V, S) -> S#state{probe_interval = V};
+                 (clients, V, S) -> S#state{clients = V};
+                 (topics, V, S) -> S#state{topics = V};
+                 (monitors, V, S) -> S#state{monitors = V};
+                 (_, _, S) -> S
+              end, Base, Overrides).
+
+%% @doc 对单个 client 执行健康探测。
+%% 使用 brod:get_partitions_count/2 验证 Kafka 连通性。
+%% 从 topic_partitions ETS 取已知 topic，无则用 <<"probe">>。
+-spec do_probe(atom()) -> ok | {error, term()}.
+do_probe(ClientId) ->
+    case brod_sup:find_client(ClientId) of
+        [Pid] when is_pid(Pid) ->
+            Topic = probe_topic(),
+            try brod:get_partitions_count(ClientId, Topic) of
+                {ok, _} -> ok;
+                {error, unknown_topic_or_partition} -> ok;
+                {error, Reason} -> {error, Reason}
+            catch
+                _:Reason -> {error, Reason}
+            end;
+        [] ->
+            {error, client_not_found}
+    end.
+
+%% @doc 获取探测使用的 topic：优先从 ETS 取已知 topic，无则用 <<"probe">>。
+-spec probe_topic() -> binary().
+probe_topic() ->
+    try ets:first(?TOPIC_PARTITIONS) of
+        '$end_of_table' -> <<"probe">>;
+        Topic when is_binary(Topic) -> Topic
+    catch
+        _:_ -> <<"probe">>
+    end.
+
+%% @doc 执行 Kafka 健康探测并返回新 State。
+%% 根据当前 kafka_status 和探测结果决定状态转换。
+-spec probe_kafka(#state{}) -> #state{}.
+probe_kafka(State) ->
+    case do_probe(first_client(State)) of
+        ok ->
+            handle_probe_success(State);
+        {error, _} ->
+            handle_probe_failure(State)
+    end.
+
+%% @doc 处理探测成功：若之前是 down，则标记恢复并重新监控。
+-spec handle_probe_success(#state{}) -> #state{}.
+handle_probe_success(State) ->
+    case State#state.kafka_status of
+        down ->
+            mark_kafka_up(State),
+            Monitors = monitor_clients(State#state.clients),
+            State#state{kafka_status = up, down_since = undefined, monitors = Monitors};
+        up ->
+            State
+    end.
+
+%% @doc 处理探测失败：若之前是 up，则标记故障。
+-spec handle_probe_failure(#state{}) -> #state{}.
+handle_probe_failure(State) ->
+    case State#state.kafka_status of
+        up ->
+            mark_kafka_down(State),
+            demonitor_all(State#state.monitors),
+            State#state{kafka_status = down,
+                        down_since = erlang:system_time(millisecond),
+                        monitors = []};
+        down ->
+            State
+    end.
+
+%% @doc 获取 state.clients 的第一个 client，若无则返回 client1。
+-spec first_client(#state{}) -> atom().
+first_client(State) ->
+    case State#state.clients of
+        [C | _] -> C;
+        [] -> client1
+    end.
+
+%% @doc 测试辅助：从 state 读取 kafka_status 字段。
+-spec get_kafka_status(#state{}) -> up | down.
+get_kafka_status(State) ->
+    State#state.kafka_status.

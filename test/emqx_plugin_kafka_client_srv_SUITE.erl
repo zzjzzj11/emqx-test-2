@@ -22,11 +22,15 @@
         , t_monitor_one/1
         , t_monitor_clients/1
         , t_demonitor_all/1
+        , t_do_probe_success/1
+        , t_do_probe_failure/1
+        , t_probe_kafka_down_to_up/1
         ]).
 
 all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
           t_mark_kafka_down, t_mark_kafka_up,
-          t_monitor_one, t_monitor_clients, t_demonitor_all].
+          t_monitor_one, t_monitor_clients, t_demonitor_all,
+          t_do_probe_success, t_do_probe_failure, t_probe_kafka_down_to_up].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -146,4 +150,31 @@ t_demonitor_all(_Config) ->
     meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
     Monitors = emqx_plugin_kafka_client_srv:monitor_clients([client1, client2]),
     emqx_plugin_kafka_client_srv:demonitor_all(Monitors),
+    ok.
+
+%% @doc do_probe/1 should return ok when brod:get_partitions_count succeeds.
+t_do_probe_success(_Config) ->
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
+    meck:expect(brod, get_partitions_count, fun(_Client, _Topic) -> {ok, 3} end),
+    ?assertEqual(ok, emqx_plugin_kafka_client_srv:do_probe(client1)).
+
+%% @doc do_probe/1 should return {error, Reason} when brod:get_partitions_count fails.
+t_do_probe_failure(_Config) ->
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
+    meck:expect(brod, get_partitions_count, fun(_Client, _Topic) -> {error, no_leader} end),
+    Result = emqx_plugin_kafka_client_srv:do_probe(client1),
+    ?assertMatch({error, _}, Result).
+
+%% @doc probe_kafka/1 should transition from down to up when probe succeeds.
+t_probe_kafka_down_to_up(_Config) ->
+    ets:new(kafka_circuit_breaker, [named_table, public, set]),
+    ets:new(kafka_metrics, [named_table, public, set]),
+    emqx_plugin_kafka:init_tables(),
+    emqx_plugin_kafka_client_srv:init_health_metrics(),
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [self()] end),
+    meck:expect(brod, get_partitions_count, fun(_Client, _Topic) -> {ok, 3} end),
+    DownState = emqx_plugin_kafka_client_srv:make_test_state(#{kafka_status => down}),
+    NewState = emqx_plugin_kafka_client_srv:probe_kafka(DownState),
+    ?assertEqual(up, emqx_plugin_kafka_client_srv:get_kafka_status(NewState)),
+    ?assertEqual(closed, ets:lookup_element(kafka_circuit_breaker, state, 2)),
     ok.
