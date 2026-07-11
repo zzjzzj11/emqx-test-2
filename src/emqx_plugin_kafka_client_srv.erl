@@ -105,11 +105,12 @@ stop_clients() ->
 %% gen_server callbacks
 %%--------------------------------------------------------------------
 
-%% @doc 初始化：创建 ETS 表、检查 NIF、启动 brod 客户端。
+%% @doc 初始化：创建 ETS 表、检查 NIF、启动 brod 客户端、启用健康监控。
 -spec init(map()) -> {ok, #state{}}.
 init(Env) ->
     logger:info("[KAFKA PLUGIN]Start to init emqx plugin kafka client srv..... ~n"),
     ets:new(?TOPIC_PARTITIONS, [named_table, public, set]),
+    emqx_plugin_kafka:init_tables(),
     {ok, _} = application:ensure_all_started(crypto),
     {ok, _} = application:ensure_all_started(crc32cer),
     {ok, _} = application:ensure_all_started(brod),
@@ -119,10 +120,14 @@ init(Env) ->
         {error, Diag} ->
             logger:error("[KAFKA PLUGIN]crc32cer NIF check failed, producers may fail: ~p", [Diag])
     end,
+    process_flag(trap_exit, true),
     {Clients, Topics} = start_all_clients(Env),
+    Monitors = monitor_clients(Clients),
+    init_health_metrics(),
+    schedule_probe(?PROBE_INTERVAL_MS),
     {ok, #state{clients = Clients, topics = Topics,
                 kafka_status = up, down_since = undefined,
-                probe_interval = ?PROBE_INTERVAL_MS, monitors = []}}.
+                probe_interval = ?PROBE_INTERVAL_MS, monitors = Monitors}}.
 
 %% @doc 处理同步请求。
 -spec handle_call(term(), gen_server:from(), #state{}) ->

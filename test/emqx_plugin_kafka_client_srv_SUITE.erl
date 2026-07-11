@@ -30,6 +30,7 @@
         , t_restart_client_producer_failure/1
         , t_handle_client_down/1
         , t_handle_producer_exit/1
+        , t_init_health_monitoring/1
         ]).
 
 all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
@@ -38,7 +39,8 @@ all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
           t_do_probe_success, t_do_probe_failure, t_probe_kafka_down_to_up,
           t_restart_client_success, t_restart_client_failure,
           t_restart_client_producer_failure,
-          t_handle_client_down, t_handle_producer_exit].
+          t_handle_client_down, t_handle_producer_exit,
+          t_init_health_monitoring].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -256,4 +258,27 @@ t_handle_producer_exit(_Config) ->
                        self(), {reached_max_retries, no_leader_connection}, NewState),
     ?assertEqual(down, emqx_plugin_kafka_client_srv:get_kafka_status(UnchangedState)),
     ?assertEqual(DownCount1, ets:lookup_element(kafka_metrics, kafka_down_count, 2)),
+    ok.
+
+%% @doc init/1 should enable trap_exit, create ETS, init metrics, and schedule probe.
+t_init_health_monitoring(_Config) ->
+    meck:expect(brod, start_client, fun(_Addrs, _ClientId) -> ok end),
+    meck:expect(brod, start_producer, fun(_ClientId, _Topic, _Opts) -> ok end),
+    meck:expect(brod, get_partitions_count, fun(_ClientId, _Topic) -> {ok, 3} end),
+    meck:expect(brod_sup, find_client, fun(_ClientId) -> [] end),
+    Env = #{address_list => <<"localhost:9092">>,
+            topic_low => <<"t-low">>, topic_medium => <<"t-med">>, topic_high => <<"t-high">>},
+    %% Pre-create ETS tables as emqx_plugin_kafka:load/1 would
+    catch ets:new(kafka_circuit_breaker, [named_table, public, set]),
+    catch ets:new(kafka_metrics, [named_table, public, set]),
+    emqx_plugin_kafka:init_tables(),
+    {ok, Pid} = emqx_plugin_kafka_client_srv:start_link(Env),
+    %% Verify process is alive
+    ?assertEqual(true, is_process_alive(Pid)),
+    %% Verify ETS metrics were initialized
+    ?assertEqual(up, ets:lookup_element(kafka_metrics, kafka_status, 2)),
+    %% Verify trap_exit is enabled via process_info
+    {trap_exit, TrapExit} = process_info(Pid, trap_exit),
+    ?assertEqual(true, TrapExit),
+    gen_server:stop(Pid),
     ok.
