@@ -17,9 +17,12 @@
 -export([ t_suite_loads/1
         , t_init_health_metrics/1
         , t_schedule_probe/1
+        , t_mark_kafka_down/1
+        , t_mark_kafka_up/1
         ]).
 
-all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe].
+all() -> [t_suite_loads, t_init_health_metrics, t_schedule_probe,
+          t_mark_kafka_down, t_mark_kafka_up].
 
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -81,4 +84,38 @@ t_schedule_probe(_Config) ->
         1000 ->
             ?assert(false)
     end,
+    ok.
+
+%% @doc mark_kafka_down/1 should open circuit breaker and update metrics.
+t_mark_kafka_down(_Config) ->
+    %% Setup: create ETS tables as init_tables would
+    ets:new(kafka_circuit_breaker, [named_table, public, set]),
+    ets:new(kafka_metrics, [named_table, public, set]),
+    ets:insert(kafka_circuit_breaker, [{state, closed}, {failure_count, 0}, {opened_at, 0}]),
+    emqx_plugin_kafka_client_srv:init_health_metrics(),
+    State = #{},
+    emqx_plugin_kafka_client_srv:mark_kafka_down(State),
+    ?assertEqual(open, ets:lookup_element(kafka_circuit_breaker, state, 2)),
+    ?assertEqual(down, ets:lookup_element(kafka_metrics, kafka_status, 2)),
+    ?assertEqual(1, ets:lookup_element(kafka_metrics, kafka_down_count, 2)),
+    Now = erlang:system_time(millisecond),
+    LastDown = ets:lookup_element(kafka_metrics, last_down_at, 2),
+    ?assert(Now - LastDown < 5000),
+    ok.
+
+%% @doc mark_kafka_up/1 should close circuit breaker and update metrics.
+t_mark_kafka_up(_Config) ->
+    ets:new(kafka_circuit_breaker, [named_table, public, set]),
+    ets:new(kafka_metrics, [named_table, public, set]),
+    ets:insert(kafka_circuit_breaker, [{state, open}, {failure_count, 5}, {opened_at, 1}]),
+    emqx_plugin_kafka_client_srv:init_health_metrics(),
+    ets:insert(kafka_metrics, {kafka_status, down}),
+    State = #{},
+    emqx_plugin_kafka_client_srv:mark_kafka_up(State),
+    ?assertEqual(closed, ets:lookup_element(kafka_circuit_breaker, state, 2)),
+    ?assertEqual(0, ets:lookup_element(kafka_circuit_breaker, failure_count, 2)),
+    ?assertEqual(up, ets:lookup_element(kafka_metrics, kafka_status, 2)),
+    Now = erlang:system_time(millisecond),
+    LastRecovered = ets:lookup_element(kafka_metrics, last_recovered_at, 2),
+    ?assert(Now - LastRecovered < 5000),
     ok.

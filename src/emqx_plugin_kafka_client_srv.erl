@@ -42,6 +42,8 @@
 %% Health monitoring (exported for testing and internal use)
 -export([ init_health_metrics/0
         , schedule_probe/1
+        , mark_kafka_down/1
+        , mark_kafka_up/1
         ]).
 
 %% gen_server callbacks
@@ -256,4 +258,36 @@ init_health_metrics() ->
 -spec schedule_probe(integer()) -> ok.
 schedule_probe(IntervalMs) ->
     erlang:send_after(IntervalMs, self(), probe_kafka),
+    ok.
+
+%% @doc 标记 Kafka 故障：立即打开熔断器，更新指标。
+%% 使用 try/catch 防止 ETS 表不存在时崩溃。
+-spec mark_kafka_down(term()) -> ok.
+mark_kafka_down(_State) ->
+    Now = erlang:system_time(millisecond),
+    try
+        ets:insert(?CB_TABLE, [{state, open}, {opened_at, Now}]),
+        ets:insert(kafka_metrics, {kafka_status, down}),
+        ets:insert(kafka_metrics, {last_down_at, Now}),
+        ets:update_counter(kafka_metrics, kafka_down_count, 1),
+        logger:warning("[KAFKA PLUGIN]Kafka marked DOWN, circuit breaker opened")
+    catch
+        _:_ ->
+            logger:error("[KAFKA PLUGIN]Failed to mark Kafka down (ETS table missing)")
+    end,
+    ok.
+
+%% @doc 标记 Kafka 恢复：立即关闭熔断器，重置失败计数，更新指标。
+-spec mark_kafka_up(term()) -> ok.
+mark_kafka_up(_State) ->
+    Now = erlang:system_time(millisecond),
+    try
+        ets:insert(?CB_TABLE, [{state, closed}, {failure_count, 0}, {opened_at, 0}]),
+        ets:insert(kafka_metrics, {kafka_status, up}),
+        ets:insert(kafka_metrics, {last_recovered_at, Now}),
+        logger:info("[KAFKA PLUGIN]Kafka marked UP, circuit breaker closed")
+    catch
+        _:_ ->
+            logger:error("[KAFKA PLUGIN]Failed to mark Kafka up (ETS table missing)")
+    end,
     ok.
