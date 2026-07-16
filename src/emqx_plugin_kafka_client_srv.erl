@@ -392,12 +392,11 @@ make_test_state(Overrides) ->
                  (_, _, S) -> S
               end, Base, Overrides).
 
-%% @doc 对单个 client 执行健康探测。
-%% 使用 gen_tcp:connect/4 直接测试 Kafka broker 的 TCP 连通性，
-%% 不依赖 brod 缓存的元数据，能可靠检测 Kafka 不可达。
+%% @doc 执行 Kafka 健康探测。
+%% 所有 client 共享同一 Kafka 集群，探测一次 broker TCP 连通性即可判断整体健康。
 -spec do_probe(atom()) -> ok | {error, term()}.
-do_probe(ClientId) ->
-    logger:debug("[KAFKA PLUGIN]Probing Kafka connectivity for client ~p", [ClientId]),
+do_probe(_ClientId) ->
+    logger:debug("[KAFKA PLUGIN]Probing Kafka broker TCP connectivity", []),
     probe_kafka_connection().
 
 %% @doc 通过 TCP 连接测试 Kafka broker 连通性。

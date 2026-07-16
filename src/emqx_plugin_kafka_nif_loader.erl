@@ -4,10 +4,11 @@
 
 -export([ensure_nif_loaded/0]).
 
-%% Architecture to .so filename mapping (Linux only — plugin runs in Docker)
--define(ARCH_SO_MAP, [
-    {<<"aarch64-unknown-linux-gnu">>, <<"crc32cer_nif_aarch64.so">>},
-    {<<"x86_64-unknown-linux-gnu">>,  <<"crc32cer_nif_x86_64.so">>}
+%% Architecture to .so filename mapping — prefix-based matching.
+%% Linux arch strings vary by toolchain (e.g. x86_64-pc-linux-gnu vs x86_64-unknown-linux-gnu).
+-define(ARCH_SO_PREFIX_MAP, [
+    {<<"aarch64">>, <<"crc32cer_nif_aarch64.so">>},
+    {<<"x86_64">>,  <<"crc32cer_nif_x86_64.so">>}
 ]).
 
 %% @doc Ensures the crc32cer NIF is loaded for the current architecture.
@@ -104,14 +105,20 @@ is_module_loaded(Mod) ->
         {file, _} -> true
     end.
 
-%% @doc Maps system architecture string to the corresponding .so filename.
+%% @doc Maps system architecture string to the corresponding .so filename
+%% by prefix matching (e.g. "x86_64" matches both -pc- and -unknown- variants).
 -spec arch_to_so_name(binary()) -> binary() | undefined.
-proplists_get_value(Key, [{Key, Value} | _]) -> Value;
-proplists_get_value(Key, [_ | Rest]) -> proplists_get_value(Key, Rest);
-proplists_get_value(_, []) -> undefined.
-
 arch_to_so_name(Arch) ->
-    proplists_get_value(Arch, ?ARCH_SO_MAP).
+    arch_to_so_name_by_prefix(Arch, ?ARCH_SO_PREFIX_MAP).
+
+-spec arch_to_so_name_by_prefix(binary(), [{binary(), binary()}]) -> binary() | undefined.
+arch_to_so_name_by_prefix(_Arch, []) ->
+    undefined;
+arch_to_so_name_by_prefix(Arch, [{Prefix, SoName} | Rest]) ->
+    case binary:longest_common_prefix([Arch, Prefix]) of
+        Len when Len >= byte_size(Prefix) -> SoName;
+        _ -> arch_to_so_name_by_prefix(Arch, Rest)
+    end.
 
 %% @doc Copies the architecture-specific .so from plugin priv to crc32cer priv.
 -spec place_arch_so(binary()) -> ok | {error, term()}.

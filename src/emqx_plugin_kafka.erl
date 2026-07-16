@@ -134,10 +134,15 @@ on_client_authenticate(ClientInfo = #{clientid := ClientId}, Result, _Env) ->
   {ok, Result}.
 
 %% @doc 客户端授权钩子。
--spec on_client_authorize(map(), atom(), binary(), map(), map()) -> {ok, map()}.
-on_client_authorize(#{clientid := ClientId}, PubSub, Topic, Result, _Env) ->
-  logger:debug("Client(~s) authorize, ~p to topic(~s) Result:~p~n", [ClientId, PubSub, Topic, Result]),
-  {ok, Result}.
+%% publish 动作下对非 iot-service 账号进行 topic 白名单校验，
+%% 仅允许发布 /data/rep/${productKey}/${deviceName} 与 /data/req/${productKey}/${deviceName}。
+-spec on_client_authorize(map(), atom() | map(), binary(), map(), map()) -> {ok, map()} | {stop, map()}.
+on_client_authorize(ClientInfo = #{clientid := ClientId}, PubSub, Topic, Result, _Env) ->
+  logger:debug("Client(~s) authorize, ~p to topic(~s) ", [ClientId, PubSub, Topic]),
+  case is_publish_action(PubSub) of
+    true -> authorize_publish(ClientInfo, Topic, Result);
+    false -> {ok, Result}
+  end.
 
 %% @doc 客户端订阅钩子。
 -spec on_client_subscribe(map(), map(), list(), map()) -> {ok, list()}.
@@ -644,3 +649,54 @@ ntoa({0, 0, 0, 0, 0, 16#ffff, AB, CD}) ->
   inet_parse:ntoa({AB bsr 8, AB rem 256, CD bsr 8, CD rem 256});
 ntoa(IP) ->
   inet_parse:ntoa(IP).
+
+%%--------------------------------------------------------------------
+%% Publish authorization
+%%--------------------------------------------------------------------
+
+%% @doc 判断授权动作是否为 publish（兼容 atom 与 EMQX 5.x action map 两种形式）。
+-spec is_publish_action(atom() | map()) -> boolean().
+is_publish_action(publish) -> true;
+is_publish_action(#{action_type := publish}) -> true;
+is_publish_action(_) -> false.
+
+%% @doc 对 publish 动作进行授权：iot-service 账号直接放行，
+%% 其他账号校验 topic 是否在允许列表内，不匹配则拒绝。
+-spec authorize_publish(map(), binary(), map()) -> {ok, map()} | {stop, map()}.
+authorize_publish(#{username := <<"iot-service">>}, _Topic, Result) ->
+  {ok, Result};
+authorize_publish(#{clientid := ClientId, username := Username}, Topic, Result) ->
+  case is_topic_allowed(Username, Topic) of
+    true ->
+      {ok, Result};
+    false ->
+      logger:warning("[KAFKA PLUGIN]Client(~s) username(~s) publish to topic(~s) denied",
+                     [ClientId, Username, Topic]),
+      {stop, Result#{result => deny}}
+  end;
+authorize_publish(#{clientid := ClientId}, Topic, Result) ->
+  %% 无 username 的账号视为非 iot-service，拒绝发布
+  logger:warning("[KAFKA PLUGIN]Client(~s) without username publish to topic(~s) denied",
+                 [ClientId, Topic]),
+  {stop, Result#{result => deny}}.
+
+%% @doc 校验 topic 是否为该设备允许发布的 topic。
+%% username 格式为 ${productKey}&${deviceName}，
+%% 允许发布 /data/rep/${productKey}/${deviceName} 与 /data/req/${productKey}/${deviceName}。
+-spec is_topic_allowed(binary() | undefined, binary()) -> boolean().
+is_topic_allowed(Username, Topic) when is_binary(Username) ->
+  case binary:split(Username, <<"&">>) of
+    [ProductKey, DeviceName] when ProductKey =/= <<>>, DeviceName =/= <<>> ->
+      lists:member(Topic, allowed_pub_topics(ProductKey, DeviceName));
+    _ ->
+      false
+  end;
+is_topic_allowed(_, _) ->
+  false.
+
+%% @doc 构建设备允许发布的 topic 列表。
+-spec allowed_pub_topics(binary(), binary()) -> [binary()].
+allowed_pub_topics(ProductKey, DeviceName) ->
+  [ <<"/data/rep/", ProductKey/binary, "/", DeviceName/binary>>
+  , <<"/data/req/", ProductKey/binary, "/", DeviceName/binary>>
+  ].
