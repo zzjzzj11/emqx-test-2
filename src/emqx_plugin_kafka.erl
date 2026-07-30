@@ -681,22 +681,33 @@ authorize_publish(#{clientid := ClientId}, Topic, Result) ->
   {stop, Result#{result => deny}}.
 
 %% @doc 校验 topic 是否为该设备允许发布的 topic。
-%% username 格式为 ${productKey}&${deviceName}，
-%% 允许发布 /data/rep/${productKey}/${deviceName} 与 /data/req/${productKey}/${deviceName}。
+%% username 格式为 ${productKey}&${deviceName}，先做精确匹配再做通配模式匹配。
 -spec is_topic_allowed(binary() | undefined, binary()) -> boolean().
 is_topic_allowed(Username, Topic) when is_binary(Username) ->
   case binary:split(Username, <<"&">>) of
     [ProductKey, DeviceName] when ProductKey =/= <<>>, DeviceName =/= <<>> ->
-      lists:member(Topic, allowed_pub_topics(ProductKey, DeviceName));
+      lists:member(Topic, allowed_pub_topics_exact(ProductKey, DeviceName))
+        orelse topic_matches_patterns(Topic, allowed_pub_topic_patterns(ProductKey, DeviceName));
     _ ->
       false
   end;
 is_topic_allowed(_, _) ->
   false.
 
-%% @doc 构建设备允许发布的 topic 列表。
--spec allowed_pub_topics(binary(), binary()) -> [binary()].
-allowed_pub_topics(ProductKey, DeviceName) ->
+%% @doc 精确匹配允许的发布 topic 列表。
+-spec allowed_pub_topics_exact(binary(), binary()) -> [binary()].
+allowed_pub_topics_exact(ProductKey, DeviceName) ->
   [ <<"/data/rep/", ProductKey/binary, "/", DeviceName/binary>>
   , <<"/data/req/", ProductKey/binary, "/", DeviceName/binary>>
   ].
+
+%% @doc 通配模式匹配允许的发布 topic 列表（+ 匹配单级通配符）。
+-spec allowed_pub_topic_patterns(binary(), binary()) -> [binary()].
+allowed_pub_topic_patterns(ProductKey, DeviceName) ->
+  [ <<"/cmd/sync/resp/", ProductKey/binary, "/", DeviceName/binary, "/+">>
+  ].
+
+%% @doc 用 MQTT 通配规则检查 topic 是否匹配任一模式。
+-spec topic_matches_patterns(binary(), [binary()]) -> boolean().
+topic_matches_patterns(Topic, Patterns) ->
+  lists:any(fun(Pattern) -> emqx_topic:match(Topic, Pattern) end, Patterns).
