@@ -119,8 +119,10 @@ init(Env) ->
             logger:error("[KAFKA PLUGIN]crc32cer NIF check failed, producers may fail: ~p", [Diag])
     end,
     process_flag(trap_exit, true),
+    register_custom_metrics(),
     {Clients, Topics} = start_all_clients(Env),
     Monitors = monitor_clients(Clients),
+    update_client_status_metric(length(Monitors)),
     init_health_metrics(),
     schedule_probe(?PROBE_INTERVAL_MS),
     erlang:send_after(2000, self(), setup_monitors),
@@ -295,6 +297,9 @@ mark_kafka_down(_State) ->
     Now = erlang:system_time(millisecond),
     try
         ets:insert(?CB_TABLE, [{state, open}, {opened_at, Now}]),
+        emqx_metrics:set('plugin.custom.kafka.status', 0),
+        emqx_metrics:set('plugin.custom.kafka.client.status', 0),
+        emqx_metrics:inc('plugin.custom.kafka.down_total'),
         ets:insert(kafka_metrics, {kafka_status, down}),
         ets:insert(kafka_metrics, {last_down_at, Now}),
         ets:update_counter(kafka_metrics, kafka_down_count, 1),
@@ -307,12 +312,14 @@ mark_kafka_down(_State) ->
 
 %% @doc 标记 Kafka 恢复：立即关闭熔断器，重置失败计数，更新指标。
 -spec mark_kafka_up(term()) -> ok.
-mark_kafka_up(_State) ->
+mark_kafka_up(State) ->
     Now = erlang:system_time(millisecond),
     try
         ets:insert(?CB_TABLE, [{state, closed}, {failure_count, 0}, {opened_at, 0}]),
         ets:insert(kafka_metrics, {kafka_status, up}),
         ets:insert(kafka_metrics, {last_recovered_at, Now}),
+        emqx_metrics:set('plugin.custom.kafka.status', 1),
+        emqx_metrics:set('plugin.custom.kafka.client.status', length(State#state.clients)),
         logger:info("[KAFKA PLUGIN]Kafka marked UP, circuit breaker closed")
     catch
         _:_ ->
@@ -521,6 +528,7 @@ handle_client_down(ClientId, Reason, State) ->
                         down_since = erlang:system_time(millisecond),
                         monitors = []};
         down ->
+            emqx_metrics:set('plugin.custom.kafka.client.status', length(State#state.monitors)),
             State
     end.
 
@@ -564,3 +572,19 @@ handle_down_by_ref(Ref, Reason, State) ->
             logger:debug("[KAFKA PLUGIN]Unknown monitor ref down: ~p", [Ref]),
             State
     end.
+
+%% @doc 注册 plugin.custom.kafka.* 自定义指标到 emqx_metrics。
+-spec register_custom_metrics() -> ok.
+register_custom_metrics() ->
+    emqx_metrics:ensure(gauge, 'plugin.custom.kafka.status'),
+    emqx_metrics:ensure(gauge, 'plugin.custom.kafka.client.status'),
+    emqx_metrics:ensure(counter, 'plugin.custom.kafka.produce_success'),
+    emqx_metrics:ensure(counter, 'plugin.custom.kafka.produce_failed'),
+    emqx_metrics:ensure(counter, 'plugin.custom.kafka.down_total'),
+    ok.
+
+%% @doc 更新 client.status gauge（健康的 brod client 数量）。
+-spec update_client_status_metric(non_neg_integer()) -> ok.
+update_client_status_metric(N) ->
+    emqx_metrics:set('plugin.custom.kafka.client.status', N),
+    ok.

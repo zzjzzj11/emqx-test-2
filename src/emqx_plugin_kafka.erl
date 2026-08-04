@@ -236,6 +236,7 @@ produce_kafka_payload(Client, Key, Message, Topic) ->
     allow ->
       do_produce(Client, Key, Message, Topic);
     deny ->
+      emqx_metrics:inc('plugin.custom.kafka.produce_failed'),
       increment_metric(failed),
       logger:warning("[KAFKA PLUGIN]Circuit breaker open, message dropped for topic ~s", [Topic]),
       {error, circuit_open}
@@ -251,12 +252,15 @@ do_produce(Client, Key, Message, Topic) ->
   end,
   case brod:produce_cb(Client, Topic, Partition, Key, MessageBody, AckCb) of
     ok ->
+      emqx_metrics:inc('plugin.custom.kafka.produce_success'),
       increment_metric(success),
       reset_failures();
     {ok, _Partition} ->
+      emqx_metrics:inc('plugin.custom.kafka.produce_success'),
       increment_metric(success),
       reset_failures();
     {error, Reason} ->
+      emqx_metrics:inc('plugin.custom.kafka.produce_failed'),
       increment_metric(failed),
       record_failure(),
       logger:error("[KAFKA PLUGIN]Produce failed for topic ~s: ~p", [Topic, Reason]),
