@@ -136,13 +136,18 @@ on_client_authenticate(ClientInfo = #{clientid := ClientId}, Result, _Env) ->
 %% @doc 客户端授权钩子。
 %% publish 动作下对非 iot-service 账号进行 topic 白名单校验，
 %% 仅允许发布 /data/rep/${productKey}/${deviceName} 与 /data/req/${productKey}/${deviceName}。
--spec on_client_authorize(map(), atom() | map(), binary(), map(), map()) -> {ok, map()} | {stop, map()}.
-on_client_authorize(ClientInfo = #{clientid := ClientId}, PubSub, Topic, Result, _Env) ->
-  logger:debug("Client(~s) authorize, ~p to topic(~s) ", [ClientId, PubSub, Topic]),
-  case is_publish_action(PubSub) of
-    true -> authorize_publish(ClientInfo, Topic, Result);
-    false -> {ok, Result}
-  end.
+%% -spec on_client_authorize(map(), atom() | map(), binary(), map(), map()) -> {ok, map()} | {stop, map()}.
+%% on_client_authorize(ClientInfo = #{clientid := ClientId}, PubSub, Topic, Result, _Env) ->
+%%   logger:debug("Client(~s) authorize, ~p to topic(~s) ", [ClientId, PubSub, Topic]),
+%%   case is_publish_action(PubSub) of
+%%     true -> authorize_publish(ClientInfo, Topic, Result);
+%%     false -> {ok, Result}
+%%   end.
+
+-spec on_client_authorize(map(), atom(), binary(), map(), map()) -> {ok, map()}.
+on_client_authorize(#{clientid := ClientId}, PubSub, Topic, Result, _Env) ->
+  logger:debug("Client(~s) authorize, ~p to topic(~s) Result:~p~n", [ClientId, PubSub, Topic, Result]),
+  {ok, Result}.
 
 %% @doc 客户端订阅钩子。
 -spec on_client_subscribe(map(), map(), list(), map()) -> {ok, list()}.

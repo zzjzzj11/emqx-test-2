@@ -1,6 +1,6 @@
 {application, emqx_plugin_kafka,
- [{description, "EMQX Plugin -kafka-with brod"},
-  {vsn, "5.0.0"},
+ [{description, "EMQX Plugin -kafka-with brod and add health check."},
+  {vsn, "5.0.1"},
   {modules, []},
   {registered, [emqx_plugin_kafka_sup]},
   {applications, [kernel,stdlib,map_sets]},
