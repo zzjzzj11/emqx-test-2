@@ -1,0 +1,68 @@
+name: Build EMQX Plugin Offline Bundle (Builder Container)
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_dir:
+        description: "插件源码相对目录"
+        default: "emqx-test-2"
+      builder_line:
+        description: "emqx-builder 线号"
+        default: "5.3-13"
+      otp_tag:
+        description: "builder OTP tag"
+        default: "1.15.7-26.2.5.2-1-ubuntu20.04"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      IMAGE: ghcr.io/emqx/emqx-builder/${{ github.event.inputs.builder_line }}:${{ github.event.inputs.otp_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Pull builder image
+        run: docker pull "$IMAGE"
+
+      - name: Save builder image to tar
+        run: docker save "$IMAGE" -o builder-image.tar
+
+      - name: Compile plugin inside builder (warm rebar3 cache)
+        run: |
+          PLUGIN_DIR=${{ github.event.inputs.plugin_dir }}
+          docker run --rm \
+            -v "$PWD/$PLUGIN_DIR":/src -w /src \
+            -e REBAR_CACHE_DIR=/src/.rebar-cache \
+            -e HOME=/src \
+            "$IMAGE" \
+            bash -c "rebar3 as prod compile && rebar3 as prod release"
+
+      - name: Verify brod is packaged
+        run: |
+          PLUGIN_DIR=${{ github.event.inputs.plugin_dir }}
+          tar -tzf "$PLUGIN_DIR/_build/default/emqx_plugrel/"*.tar.gz \
+            | grep -E 'lib/brod/ebin|lib/kafka_protocol/ebin'
+
+      - name: Package offline bundle
+        run: |
+          PLUGIN_DIR=${{ github.event.inputs.plugin_dir }}
+          mkdir -p offline-bundle
+          mv builder-image.tar offline-bundle/
+          cp -r "$PLUGIN_DIR" offline-bundle/plugin-src
+          # 清理最终产物 tar.gz（离线机自己编）
+          rm -f offline-bundle/plugin-src/_build/default/emqx_plugrel/*.tar.gz
+          cd offline-bundle
+          tar -czf ../emqx-plugin-offline-bundle.tar.gz .
+          cd ..
+
+      - name: Upload as Release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: offline-bundle-5.8.9
+          name: EMQX 5.8.9 Plugin Offline Bundle (Builder + rebar cache + _build)
+          files: emqx-plugin-offline-bundle.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
